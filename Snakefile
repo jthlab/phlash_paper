@@ -1,11 +1,26 @@
 import os
-
-os.environ["PSMC_PATH"] = "/scratch/psmc/psmc"
 import stdpopsim
 import tskit
+import json
+import pandas as pd
 import numpy as np
+import pickle
 
+from eastbay.size_history import DemographicModel, SizeHistory
+
+os.environ["PSMC_PATH"] = "lib/psmc/psmc"
+METHODS = ["smcpp", "psmc", "fitcoal", "eastbay"]
 MAX_SAMPLE_SIZE = 100
+NUM_REPLICATES = 1
+
+
+wildcard_constraints:
+    chrom=r"\w+",
+    species=r"\w+",
+    population=r"\w+",
+    num_samples=r"[0-9]+",
+    seed=r"[0-9]+",
+    demographic_model=r"\w+",
 
 
 def get_chroms(species_name):
@@ -26,6 +41,26 @@ def get_genome_length(species_name):
     return sum(species.get_contig(chrom).length for chrom in get_chroms(species_name))
 
 
+def get_truth(species_name, demographic_model, population):
+    species = stdpopsim.get_species(species_name)
+    mu = get_default_mutation_rate(species_name)
+    if demographic_model == "Constant":
+        t = np.array([0.0])
+        Ne = np.array([species.population_size])
+    else:
+        model = species.get_demographic_model(demographic_model)
+        md = model.model.debug()
+        breakpoint()
+        t_min = 1.0
+        t_max = md.epochs[-1].start_time + 1
+        assert np.isinf(md.epochs[-1].end_time)
+        t = np.geomspace(t_min, t_max, 1000)
+        Ne = md.population_size_trajectory(t)[:, pop_index]
+    eta = SizeHistory(t=t, c=1.0 / 2.0 / Ne)
+    true_dm = DemographicModel(eta=eta, theta=mu, rho=None)
+    return true_dm
+
+
 def ts_input_for_species(wc):
     return [
         f"simulations/{wc.seed}/{wc.species}/{wc.other_params}/chr%s.ts" % chrom
@@ -38,9 +73,10 @@ MODELS = [("HomSap", "Zigzag_1S14", "pop_0"), ("HomSap", "Constant", "pop_0")]
 
 rule all:
     input:
-        # "methods/smcpp/output/1/HomSap/Constant/pop_0/n2/model.final.json",
+        # "methods/smcpp/output/1/HomSap/Constant/pop_0/n2/dm.pkl",
         # "methods/psmc/output/1/HomSap/Constant/pop_0/n2/psmc.out.txt",
-        "methods/fitcoal/output/1/HomSap/Constant/pop_0/n2/fitcoal.out.txt",
+        # "methods/eastbay/output/1/HomSap/Constant/pop_0/n2/eb.dat",
+        "figures/HomSap/Constant/pop_0/n2/fig.pdf",
 
 
 rule run_stdpopsim:
@@ -49,7 +85,7 @@ rule run_stdpopsim:
     run:
         template = (
             "stdpopsim {wildcards.species} %s -c {wildcards.chrom} -o {output} "
-            "-l 0.1 -s {wildcards.seed} {wildcards.population}:{MAX_SAMPLE_SIZE}"
+            "-l 1.0 -s {wildcards.seed} {wildcards.population}:{MAX_SAMPLE_SIZE}"
         )
         if wildcards.demographic_model == "Constant":
             dm = ""
@@ -62,7 +98,7 @@ rule gen_frequency_spectrum:
     input:
         ts_input_for_species,
     output:
-        r"simulations/{seed,\d+}/{species,\w+}/{other_params}/n{num_samples,\d+}/afs.txt",
+        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/afs.txt",
     run:
         afss = []
         for ts in map(tskit.load, input):
@@ -98,12 +134,11 @@ rule index_bcf:
 rule smcpp_vcf2smc:
     input:
         [
-            r"simulations/{seed,\d+}/{species,\w+}/{other_params}/{chrom,\w+}.bcf"
-            + ext
+            r"simulations/{seed}/{species}/{other_params}/{chrom}.bcf" + ext
             for ext in ["", ".csi"]
         ],
     output:
-        r"methods/smcpp/input/{seed}/{species}/{other_params}/n{sample_size,\d+}/{chrom,\w+}.smc.txt.gz",
+        r"methods/smcpp/input/{seed}/{species}/{other_params}/n{sample_size}/{chrom}.smc.txt.gz",
     run:
         sample_ids = ",".join([f"tsk_{i}" for i in range(int(wildcards.sample_size))])
         pop_str = "pop1:" + sample_ids
@@ -122,12 +157,38 @@ rule smcpp_estimate:
     input:
         smcpp_input_for_estimate,
     output:
-        r"methods/smcpp/output/{seed,\d+}/{species,\w+}/{other_params}/model.final.json",
+        r"methods/smcpp/output/{seed}/{species}/{other_params}/model.final.json",
     params:
         outdir=lambda wc, output: os.path.dirname(output[0]),
         mutation_rate=lambda wc: get_default_mutation_rate(wc.species),
     shell:
-        "smc++ estimate -o {params.outdir} {params.mutation_rate} {input}"
+        "smc++ estimate -o {params.outdir} --em-iterations 1 {params.mutation_rate} {input}"
+
+
+rule smcpp_to_csv:
+    input:
+        "methods/smcpp/output/{params}/model.final.json",
+    output:
+        ["methods/smcpp/output/{params}/plot.%s" % ext for ext in ["png", "csv"]],
+    shell:
+        "smc++ plot -c {output[0]} {input}"
+
+
+rule smcpp_to_dm:
+    input:
+        [
+            "methods/smcpp/output/{params}/%s" % fn
+            for fn in ["model.final.json", "plot.csv"]
+        ],
+    output:
+        "methods/smcpp/output/{params}/dm.pkl",
+    run:
+        mdl = json.load(open(input[0]))
+        df = pd.read_csv(input[1])
+        eta = SizeHistory(t=df["x"], c=1 / 2 / df["y"])
+        dm = DemographicModel(theta=mdl["theta"], rho=mdl["rho"], eta=eta)
+        with open(output[0], "wb") as f:
+            pickle.dump(dm, f)
 
 
 rule psmc_estimate:
@@ -135,9 +196,9 @@ rule psmc_estimate:
         ts_input_for_species,
     output:
         [
-            r"methods/psmc/output/{seed,\d+}/{species,\w+}/{other_params}/n{num_samples,\d+}/psmc.%s"
-            % ext
-            for ext in ["dat", "out.txt"]
+            r"methods/psmc/output/{seed}/{species}/{other_params}/n{num_samples}/%s"
+            % fn
+            for fn in ["dm.pkl", "psmc_out.txt"]
         ],
     script:
         "scripts/mspsmc.py"
@@ -145,12 +206,12 @@ rule psmc_estimate:
 
 rule fitcoal_estimate:
     input:
-        r"simulations/{seed,\d+}/{species,\w+}/{other_params}/afs.txt",
+        r"simulations/{seed}/{species}/{other_params}/afs.txt",
     output:
-        r"methods/fitcoal/output/{seed,\d+}/{species,\w+}/{other_params}/fitcoal.out.txt",
+        r"methods/fitcoal/output/{seed}/{species}/{other_params}/fitcoal.out.txt",
     params:
-        mu=lambda wc: get_default_mutation_rate(wc.species),
-        genome_length_kbp=lambda wc: int(get_genome_length(wc.species) / 1000),
+        mu=lambda wc: get_default_mutation_rate(wc.species) * 1000,  # mutation rate per kb per generation
+        genome_length_kbp=lambda wc: int(get_genome_length(wc.species) / 1000),  # length of genome in kb
         output_base=lambda wc, output: os.path.splitext(output[0])[0],
     shell:
         "java -cp lib/FitCoal1.1/FitCoal.jar FitCoal.calculate.SinglePopDecoder "
@@ -158,3 +219,46 @@ rule fitcoal_estimate:
         "-input {input} -output {params.output_base} "
         "-mutationRate {params.mu} -generationTime 1 "
         "-genomeLength {params.genome_length_kbp}"
+
+
+rule fitcoal_to_dm:
+    input:
+        r"methods/fitcoal/output/{seed}/{species}/{other_params}/fitcoal.out.txt",
+    output:
+        r"methods/fitcoal/output/{seed}/{species}/{other_params}/dm.pkl",
+    run:
+        df = pd.read_csv(input[0], sep="\t")
+        eta = SizeHistory(t=df["year"], c=df["popSize"])
+        mu = get_default_mutation_rate(wildcards.species)
+        dm = DemographicModel(theta=mu, rho=None, eta=eta)
+        with open(output[0], "wb") as f:
+            pickle.dump(dm, f)
+
+
+rule eastbay_estimate:
+    input:
+        ts_input_for_species,
+    output:
+        r"methods/eastbay/output/{seed}/{species}/{other_params}/n{num_samples}/dm.pkl",
+    resources:
+        gpu=1,
+    script:
+        "scripts/eb.py"
+
+
+rule plot:
+    input:
+        **{
+            k: [
+                r"methods/%s/output/%d/{species}/{demographic_model}/{population}/n{num_samples}/dm.pkl"
+                % (k, i)
+                for i in range(NUM_REPLICATES)
+            ]
+            for k in METHODS
+        },
+    output:
+        r"figures/{species}/{demographic_model}/{population}/n{num_samples}/fig.pdf",
+    params:
+        truth=lambda wc: get_truth(wc.species, wc.demographic_model, wc.population),
+    script:
+        "scripts/plot.py"
