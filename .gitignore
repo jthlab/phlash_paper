@@ -2,3 +2,6 @@ __pycache__
 pipeline
 .snakemake
 .prefectignore
+venv
+eastbay_paper
+lib/FitCoal1.1/tables
