@@ -14,8 +14,9 @@ from eastbay.size_history import DemographicModel, SizeHistory
 os.environ["PSMC_PATH"] = "../lib/psmc/psmc"
 METHODS = ["smcpp", "psmc", "fitcoal", "eastbay"]
 MAX_SAMPLE_SIZE = 10
-NUM_REPLICATES = 5
-LENGTH_MULTIPLIER = 0.1
+NUM_REPLICATES = 1
+LENGTH_MULTIPLIER = 0.01
+BCFTOOLS_CMD = "~/.local/bin/bcftools"
 
 wildcard_constraints:
     chrom=r"\w+",
@@ -26,7 +27,8 @@ wildcard_constraints:
     demographic_model=r"\w+",
 
 
-workdir: "pipeline"
+workdir: "/scratch/jonth_root/jonth0/jonth/eastbay_paper/pipeline"
+# workdir: "pipeline"
 
 
 def get_chroms(species_name):
@@ -125,7 +127,7 @@ rule ts2vcf:
     output:
         "{path}.bcf",
     shell:
-        "python3 -m tskit vcf {input} | bcftools view -o {output}"
+        "python3 -m tskit vcf {input} | %s view -o {output}" % BCFTOOLS_CMD
 
 
 rule index_bcf:
@@ -134,7 +136,7 @@ rule index_bcf:
     output:
         "{path}.bcf.csi",
     shell:
-        "bcftools index {input}"
+        "%s index {input}" % BCFTOOLS_CMD
 
 
 rule smcpp_vcf2smc:
@@ -167,10 +169,11 @@ rule smcpp_estimate:
     params:
         outdir=lambda wc, output: os.path.dirname(output[0]),
         mutation_rate=lambda wc: get_default_mutation_rate(wc.species),
+    threads: 8
     resources:
-        threads: 4
+        mem_mb=64000
     shell:
-        "smc++ --cores 4 estimate -o {params.outdir} {params.mutation_rate} {input}"
+        "smc++ estimate --cores 8 -o {params.outdir} {params.mutation_rate} {input}"
 
 
 rule smcpp_to_csv:
@@ -271,6 +274,7 @@ rule eastbay_estimate:
     resources:
         gpu=1,
         slurm_partition="spgpu",
+        slurm_extra="--gpus 1"
     script:
         "scripts/eb.py"
 
