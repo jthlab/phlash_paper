@@ -1,0 +1,4 @@
+__pycache__
+pipeline
+.snakemake
+.prefectignore

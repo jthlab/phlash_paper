@@ -34,7 +34,9 @@ for method, fns in snakemake.input.items():
             m = np.quantile([d.rescale(truth.theta).eta(t) for d in dm], 0.5, axis=0)
             eta = SizeHistory(t=t, c=m)
             dm = DemographicModel(eta=eta, theta=truth.theta, rho=None)
-        dm.rescale(truth.theta).eta.draw(ax, label=method)
+        c = dm.rescale(truth.theta).eta(t)
+        Ne = 1 / 2 / c
+        ax.plot(t, Ne, label=method)
 
 eastbay.liveplot.style_axis(ax)
 ax.legend()

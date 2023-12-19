@@ -106,15 +106,8 @@ class msPSMC:
          w: window size (default=100)
     """
 
-    data: List[Tuple[tskit.TreeSequence, Tuple[int, int]]]
+    psmcfa: str
     w: int = 100
-
-    def __post_init__(self):
-        self._tf = tempfile.NamedTemporaryFile(suffix=".psmcfa")
-        self._fa = self._tf.name
-        with open(self._fa, "w") as out:
-            for i, (ts, h) in enumerate(self.data):
-                _gen_psmcfa(ts, "contig%d" % i, h, out, self.w)
 
     def estimate(
         self, *args, timepoints=None, full_output=False
@@ -124,7 +117,7 @@ class msPSMC:
             "wt", suffix=".psmc"
         ) as f, tempfile.NamedTemporaryFile("wt", suffix=".txt") as params:
             if timepoints is not None:
-                out = psmc(*args, "-N", 0, self._fa)
+                out = psmc(*args, "-N", 0, self.psmcfa)
                 pa = next(line.strip() for line in out if line.startswith("PA"))
                 _, numbers = pa.split("\t")
                 pattern, theta, rho, max_n, *lam = numbers.split(" ")
@@ -132,7 +125,7 @@ class msPSMC:
                 par = f"{pattern} {theta} {rho} -1 {' '.join(lam)} {tp}"
                 print(par, file=params, flush=True)
                 args += ("-i", params.name)
-            psmc("-o", f.name, *args, self._fa)
+            psmc("-o", f.name, *args, self.psmcfa)
             f = open(f.name)
             ret = _parse_psmc(f)
             f.seek(0)
@@ -142,7 +135,7 @@ class msPSMC:
     def posterior(self, *args):
         """Return posterior decoding"""
         with tempfile.NamedTemporaryFile(suffix=".psmc") as f:
-            psmc("-o", f.name, "-d", "-D", *args, self._fa)
+            psmc("-o", f.name, "-d", "-D", *args, self.psmcfa)
             with open(f.name) as f:
                 res = _parse_psmc(f)
                 f.seek(0)
@@ -154,11 +147,9 @@ class msPSMC:
 
 if __name__ == "__main__":
     import pickle
-
-    tss = list(map(tskit.load, snakemake.input))
     n = int(snakemake.wildcards.num_samples)
     nodes = [(2 * i, 2 * i + 1) for i in range(n)]
-    p = msPSMC([(ts, n) for ts in tss for n in nodes])
+    p = msPSMC(snakemake.input[0])
     res = p.estimate()
     with open(snakemake.output[0], "wb") as f:
         pickle.dump(res, f)

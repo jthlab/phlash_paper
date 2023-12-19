@@ -6,13 +6,16 @@ import pandas as pd
 import numpy as np
 import pickle
 
+import warnings
+warnings.filterwarnings("ignore")
+
 from eastbay.size_history import DemographicModel, SizeHistory
 
-os.environ["PSMC_PATH"] = "lib/psmc/psmc"
+os.environ["PSMC_PATH"] = "../lib/psmc/psmc"
 METHODS = ["smcpp", "psmc", "fitcoal", "eastbay"]
-MAX_SAMPLE_SIZE = 100
-NUM_REPLICATES = 1
-
+MAX_SAMPLE_SIZE = 10
+NUM_REPLICATES = 5
+LENGTH_MULTIPLIER = 0.1
 
 wildcard_constraints:
     chrom=r"\w+",
@@ -21,6 +24,9 @@ wildcard_constraints:
     num_samples=r"[0-9]+",
     seed=r"[0-9]+",
     demographic_model=r"\w+",
+
+
+workdir: "pipeline"
 
 
 def get_chroms(species_name):
@@ -74,9 +80,9 @@ MODELS = [("HomSap", "Zigzag_1S14", "pop_0"), ("HomSap", "Constant", "pop_0")]
 rule all:
     input:
         # "methods/smcpp/output/1/HomSap/Constant/pop_0/n2/dm.pkl",
-        # "methods/psmc/output/1/HomSap/Constant/pop_0/n2/psmc.out.txt",
+        # "methods/psmc/output/1/HomSap/Constant/pop_0/n1/psmc_out.txt",
         # "methods/eastbay/output/1/HomSap/Constant/pop_0/n2/eb.dat",
-        "figures/HomSap/Constant/pop_0/n2/fig.pdf",
+        "figures/HomSap/Constant/pop_0/n1/fig.pdf",
 
 
 rule run_stdpopsim:
@@ -85,13 +91,13 @@ rule run_stdpopsim:
     run:
         template = (
             "stdpopsim {wildcards.species} %s -c {wildcards.chrom} -o {output} "
-            "-l 1.0 -s {wildcards.seed} {wildcards.population}:{MAX_SAMPLE_SIZE}"
+            "-l %f -s {wildcards.seed} {wildcards.population}:{MAX_SAMPLE_SIZE}"
         )
         if wildcards.demographic_model == "Constant":
             dm = ""
         else:
             dm = f" -d {wildcards.demographic_model} "
-        shell(template % dm)
+        shell(template % (dm, LENGTH_MULTIPLIER))
 
 
 rule gen_frequency_spectrum:
@@ -161,8 +167,10 @@ rule smcpp_estimate:
     params:
         outdir=lambda wc, output: os.path.dirname(output[0]),
         mutation_rate=lambda wc: get_default_mutation_rate(wc.species),
+    resources:
+        threads: 4
     shell:
-        "smc++ estimate -o {params.outdir} --em-iterations 1 {params.mutation_rate} {input}"
+        "smc++ --cores 4 estimate -o {params.outdir} {params.mutation_rate} {input}"
 
 
 rule smcpp_to_csv:
@@ -191,9 +199,30 @@ rule smcpp_to_dm:
             pickle.dump(dm, f)
 
 
+rule ts_to_psmcfa:
+    input:
+        "{other_params}/chr{chrom}.ts"
+    output:
+        "{other_params}/n{num_samples}/chr{chrom}.psmcfa"
+    script:
+        "scripts/gen_psmcfa.py"
+
+def psmcfa_input_for_species(wc):
+    return [
+        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s.psmcfa" % chrom
+        for chrom in get_chroms(wc.species)
+    ]
+
+rule combine_psmcfa:
+    input:
+        psmcfa_input_for_species,
+    output: r"methods/psmc/input/{seed}/{species}/{other_params}/n{num_samples}/combined.psmcfa"
+    shell:
+        "cat {input} > {output}"
+
 rule psmc_estimate:
     input:
-        ts_input_for_species,
+        r"methods/psmc/input/{seed}/{species}/{other_params}/n{num_samples}/combined.psmcfa"
     output:
         [
             r"methods/psmc/output/{seed}/{species}/{other_params}/n{num_samples}/%s"
@@ -202,7 +231,6 @@ rule psmc_estimate:
         ],
     script:
         "scripts/mspsmc.py"
-
 
 rule fitcoal_estimate:
     input:
@@ -242,20 +270,23 @@ rule eastbay_estimate:
         r"methods/eastbay/output/{seed}/{species}/{other_params}/n{num_samples}/dm.pkl",
     resources:
         gpu=1,
+        slurm_partition="spgpu",
     script:
         "scripts/eb.py"
 
+def input_for_plot(wc):
+    n = int(wc.num_samples)
+    ret = {}
+    for k in METHODS:
+        ret[k] = [
+                f"methods/{k}/output/{i}/{wc.species}/{wc.demographic_model}/{wc.population}/n{wc.num_samples}/dm.pkl"
+                for i in range(NUM_REPLICATES)
+                ]
+    return ret
 
 rule plot:
     input:
-        **{
-            k: [
-                r"methods/%s/output/%d/{species}/{demographic_model}/{population}/n{num_samples}/dm.pkl"
-                % (k, i)
-                for i in range(NUM_REPLICATES)
-            ]
-            for k in METHODS
-        },
+        unpack(input_for_plot)
     output:
         r"figures/{species}/{demographic_model}/{population}/n{num_samples}/fig.pdf",
     params:
