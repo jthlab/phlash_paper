@@ -1,3 +1,4 @@
 [submodule "lib/psmc"]
 	path = lib/psmc
 	url = https://github.com/lh3/psmc
+    ignore = untracked
