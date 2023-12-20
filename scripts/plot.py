@@ -1,4 +1,5 @@
 import eastbay.liveplot
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from eastbay.size_history import DemographicModel, SizeHistory
@@ -25,7 +26,10 @@ truth = snakemake.params.truth
 true_Ne = 1 / 2 / truth.eta(t)
 ax.plot(t, true_Ne, color="black", label="Truth")
 
-for method, fns in snakemake.input.items():
+palette = mpl.colormaps['Set1']
+
+for i, (method, fns) in enumerate(snakemake.input.items()):
+    Nes = []
     for fn in fns:
         with open(fn, "rb") as f:
             dm = pickle.load(f)
@@ -36,7 +40,11 @@ for method, fns in snakemake.input.items():
             dm = DemographicModel(eta=eta, theta=truth.theta, rho=None)
         c = dm.rescale(truth.theta).eta(t)
         Ne = 1 / 2 / c
-        ax.plot(t, Ne, label=method)
+        Nes.append(Ne)
+    q025, m, q975 = np.quantile(Nes, [0.025, 0.5, 0.975], axis=0)
+    col = palette(i)
+    ax.plot(t, m, color=col, label=method)
+    ax.fill_between(t, q025, q975, color=col, alpha=.1)
 
 eastbay.liveplot.style_axis(ax)
 ax.legend()

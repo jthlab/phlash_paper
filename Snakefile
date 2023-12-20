@@ -5,6 +5,7 @@ import json
 import pandas as pd
 import numpy as np
 import pickle
+import shutil
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -12,9 +13,9 @@ warnings.filterwarnings("ignore")
 from eastbay.size_history import DemographicModel, SizeHistory
 
 METHODS = ["smcpp", "psmc", "fitcoal", "eastbay"]
-MAX_SAMPLE_SIZE = 10
-NUM_REPLICATES = 1
-LENGTH_MULTIPLIER = 0.01
+MAX_SAMPLE_SIZE = 100
+NUM_REPLICATES = 10
+LENGTH_MULTIPLIER = 1.0
 BCFTOOLS_CMD = "~/.local/bin/bcftools"
 BASE = "/home/jonth/eastbay_paper"
 TURBO = "/home/jonth/turbo/jonth/eastbay_paper"
@@ -60,11 +61,11 @@ def get_truth(species_name, demographic_model, population):
     else:
         model = species.get_demographic_model(demographic_model)
         md = model.model.debug()
-        breakpoint()
-        t_min = 1.0
+        t_min = md.epochs[0].end_time * .5
         t_max = md.epochs[-1].start_time + 1
         assert np.isinf(md.epochs[-1].end_time)
         t = np.geomspace(t_min, t_max, 1000)
+        pop_index = [p.name for p in model.populations].index(population)
         Ne = md.population_size_trajectory(t)[:, pop_index]
     eta = SizeHistory(t=t, c=1.0 / 2.0 / Ne)
     true_dm = DemographicModel(eta=eta, theta=mu, rho=None)
@@ -78,7 +79,7 @@ def ts_input_for_species(wc):
     ]
 
 
-MODELS = [("HomSap", "Zigzag_1S14", "pop_0"), ("HomSap", "Constant", "pop_0")]
+MODELS = [("HomSap", "Zigzag_1S14", "generic"), ("HomSap", "Constant", "pop_0")]
 
 
 rule all:
@@ -86,15 +87,18 @@ rule all:
         # "methods/smcpp/output/1/HomSap/Constant/pop_0/n2/dm.pkl",
         # "methods/psmc/output/1/HomSap/Constant/pop_0/n1/psmc_out.txt",
         # "methods/eastbay/output/1/HomSap/Constant/pop_0/n2/eb.dat",
-        f"{TURBO}/figures/HomSap/Constant/pop_0/n1/fig.pdf",
+        [f"figures/{species}/{dm}/{pop}/n{i}/fig.pdf" for i in [1, 10, 50, 100] for (species, dm, pop) in MODELS]
 
 # begin rules
 # these rules are fast and don't need to be jobbed out to the cluster
-localrules: smcpp_to_csv, combine_psmcfa, fitcoal_to_dm, plot
+localrules: smcpp_to_csv, fitcoal_to_dm, plot, smcpp_to_dm
 
 rule run_stdpopsim:
     output:
         "simulations/{seed}/{species}/{demographic_model}/{population}/chr{chrom}.ts",
+    resources:
+        runtime=60,
+        mem_mb=8000,
     run:
         template = (
             "stdpopsim {wildcards.species} %s -c {wildcards.chrom} -o {output} "
@@ -177,9 +181,9 @@ rule smcpp_estimate:
     threads: 8
     resources:
         mem_mb=32000,
-        runtime=120
+        runtime=600,
     shell:
-        "smc++ estimate --cores 8 -o {params.outdir} {params.mutation_rate} {input}"
+        "smc++ estimate --cores {threads} -o {params.outdir} {params.mutation_rate} {input}"
 
 
 rule smcpp_to_csv:
@@ -194,40 +198,47 @@ rule smcpp_to_csv:
 rule smcpp_to_dm:
     input:
         [
-            "methods/smcpp/output/{params}/%s" % fn
+            "methods/smcpp/output/{seed}/{species}/{other_params}/%s" % fn
             for fn in ["model.final.json", "plot.csv"]
         ],
     output:
-        "methods/smcpp/output/{params}/dm.pkl",
+        "methods/smcpp/output/{seed}/{species}/{other_params}/dm.pkl",
     run:
-        mdl = json.load(open(input[0]))
         df = pd.read_csv(input[1])
         eta = SizeHistory(t=df["x"].to_numpy(), c=1 / 2 / df["y"].to_numpy())
-        dm = DemographicModel(theta=mdl["theta"], rho=mdl["rho"], eta=eta)
+	mu = get_default_mutation_rate(wildcards.species)
+        dm = DemographicModel(theta=mu, rho=None, eta=eta)
         with open(output[0], "wb") as f:
             pickle.dump(dm, f)
 
 
 rule ts_to_psmcfa:
     input:
-        "{other_params}/chr{chrom}.ts"
+        "simulations/{other_params}/chr{chrom}.ts"
     output:
-        "{other_params}/n{num_samples}/chr{chrom}.psmcfa"
+        temporary("simulations/{other_params}/n{num_samples}/chr{chrom}_{node1}_{node2}.psmcfa")
+    resources:
+        runtime=120
     script:
         "scripts/gen_psmcfa.py"
 
 def psmcfa_input_for_species(wc):
+    n = int(wc.num_samples)
     return [
-        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s.psmcfa" % chrom
+        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s_%d_%d.psmcfa" % (chrom, 2 * i, 2 * i + 1)
         for chrom in get_chroms(wc.species)
+        for i in range(n)
     ]
 
 rule combine_psmcfa:
     input:
         psmcfa_input_for_species,
     output: r"methods/psmc/input/{seed}/{species}/{other_params}/n{num_samples}/combined.psmcfa"
-    shell:
-        "cat {input} > {output}"
+    run:
+        with open(output[0], "wt") as f:
+            for fn in input:
+                with open(fn, "rt") as fin:
+                    shutil.copyfileobj(fin, f)
 
 rule psmc_estimate:
     input:
@@ -269,7 +280,8 @@ rule fitcoal_to_dm:
         r"methods/fitcoal/output/{seed}/{species}/{other_params}/dm.pkl",
     run:
         df = pd.read_csv(input[0], sep="\t")
-        eta = SizeHistory(t=df["year"].to_numpy(), c=df["popSize"].to_numpy())
+        Ne = df["popSize"].to_numpy()
+        eta = SizeHistory(t=df["year"].to_numpy(), c=1. / 2 / Ne)
         mu = get_default_mutation_rate(wildcards.species)
         dm = DemographicModel(theta=mu, rho=None, eta=eta)
         with open(output[0], "wb") as f:
@@ -294,8 +306,10 @@ def input_for_plot(wc):
     n = int(wc.num_samples)
     ret = {}
     for k in METHODS:
+        if k == "psmc" and n > 10:
+            continue
         ret[k] = [
-                f"methods/{k}/output/{i}/{wc.species}/{wc.demographic_model}/{wc.population}/n{wc.num_samples}/dm.pkl"
+                f"methods/{k}/output/{i}/{wc.species}/{wc.demographic_model}/{wc.population}/n{n}/dm.pkl"
                 for i in range(NUM_REPLICATES)
                 ]
     return ret
@@ -304,7 +318,7 @@ rule plot:
     input:
         unpack(input_for_plot)
     output:
-        r"%s/figures/{species}/{demographic_model}/{population}/n{num_samples}/fig.pdf" % TURBO
+        r"figures/{species}/{demographic_model}/{population}/n{num_samples}/fig.pdf"
     params:
         truth=lambda wc: get_truth(wc.species, wc.demographic_model, wc.population),
     script:

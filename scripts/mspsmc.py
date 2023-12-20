@@ -150,8 +150,10 @@ if __name__ == "__main__":
     n = int(snakemake.wildcards.num_samples)
     nodes = [(2 * i, 2 * i + 1) for i in range(n)]
     p = msPSMC(snakemake.input[0])
-    res = p.estimate()
+    dm = p.estimate()
+    # scale up mutation and recombination rates
+    dm = dm._replace(theta=dm.theta / 100, rho=dm.rho / 100)
     with open(snakemake.output[0], "wb") as f:
-        pickle.dump(res, f)
+        pickle.dump(dm, f)
     with open(snakemake.output[1], "wt") as f:
         f.write(p._log)

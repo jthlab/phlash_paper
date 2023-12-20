@@ -25,9 +25,9 @@ def gen_psmcfa(
 
 
 if __name__ == "__main__":
-    n = int(snakemake.wildcards.num_samples)
-    nodes = [(2 * i, 2 * i + 1) for i in range(n)]
+    wc = snakemake.wildcards
+    nodes = tuple([int(i) for i in [wc.node1, wc.node2]])
     ts = tskit.load(snakemake.input[0])
     with open(snakemake.output[0], "w") as out:
-        for i, h in enumerate(nodes):
-            gen_psmcfa(ts, "contig%d" % i, h, out, w=100)
+        tup = (wc.chrom,) + nodes
+        gen_psmcfa(ts, "chr%s_%d_%d" % tup, nodes, out, w=100)
