@@ -13,6 +13,8 @@ METHOD_TITLES = {
     "eastbay": "eastbay",
 }
 
+truth = snakemake.params.truth
+
 if snakemake.wildcards.demographic_model == "Constant":
     t1 = 1e1
     tM = 1e5
@@ -22,7 +24,6 @@ else:
 
 t = np.geomspace(0.5 * t1, 2 * tM, 1000)
 
-truth = snakemake.params.truth
 true_Ne = 1 / 2 / truth.eta(t)
 ax.plot(t, true_Ne, color="black", label="Truth")
 
