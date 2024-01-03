@@ -35,18 +35,19 @@ for i, (method, fns) in enumerate(snakemake.input.items()):
         with open(fn, "rb") as f:
             dm = pickle.load(f)
         if method == "eastbay":
-            # list of posterior samples from dm, have to compute posterior median
-            m = np.quantile([d.rescale(truth.theta).eta(t) for d in dm], 0.5, axis=0)
-            eta = SizeHistory(t=t, c=m)
-            dm = DemographicModel(eta=eta, theta=truth.theta, rho=None)
-        c = dm.rescale(truth.theta).eta(t)
+            # list of posterior samples from dm, take posterior median as point estimate
+            c = np.median([d.rescale(truth.theta).eta(t) for d in dm], axis=0)
+        else:
+            c = dm.rescale(truth.theta).eta(t)
         Ne = 1 / 2 / c
         Nes.append(Ne)
     q025, m, q975 = np.quantile(Nes, [0.025, 0.5, 0.975], axis=0)
     col = palette(i)
-    ax.plot(t, m, color=col, label=method)
+    ax.plot(t, m, color=col, label=METHOD_TITLES[method])
     ax.fill_between(t, q025, q975, color=col, alpha=.1)
 
 eastbay.liveplot.style_axis(ax)
 ax.legend()
+ax.set_xlim(t1, tM)
+ax.set_ylim(1e3, 1e6)
 fig.savefig(snakemake.output[0])
