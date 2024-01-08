@@ -16,7 +16,7 @@ METHOD_TITLES = {
 truth = snakemake.params.truth
 
 if snakemake.wildcards.demographic_model == "Constant":
-    t1 = 1e1
+    t1 = 1e3
     tM = 1e5
 else:
     t1 = truth.eta.t[1]
