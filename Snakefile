@@ -1,5 +1,6 @@
 import os
 import stdpopsim
+import re
 import tskit
 import json
 import pandas as pd
@@ -12,7 +13,7 @@ warnings.filterwarnings("ignore")
 
 from eastbay.size_history import DemographicModel, SizeHistory
 
-METHODS = ["smcpp", "psmc", "fitcoal", "eastbay"]
+METHODS = ["smcpp", "fitcoal", "eastbay", "psmc", "psmc32"]
 MAX_SAMPLE_SIZE = 100
 NUM_REPLICATES = 10
 LENGTH_MULTIPLIER = 1.0
@@ -62,7 +63,7 @@ def get_truth(species_name, demographic_model, population):
         model = species.get_demographic_model(demographic_model)
         md = model.model.debug()
         t_min = md.epochs[0].end_time * .5
-        t_max = md.epochs[-1].start_time + 1
+        t_max = 2 * md.epochs[-1].start_time + 1
         assert np.isinf(md.epochs[-1].end_time)
         t = np.geomspace(t_min, t_max, 1000)
         pop_index = [p.name for p in model.populations].index(population)
@@ -87,11 +88,11 @@ rule all:
         # "methods/smcpp/output/1/HomSap/Constant/pop_0/n2/dm.pkl",
         # "methods/psmc/output/1/HomSap/Constant/pop_0/n1/psmc_out.txt",
         # "methods/eastbay/output/1/HomSap/Constant/pop_0/n2/eb.dat",
-        [f"figures/{species}/{dm}/{pop}/n{i}/fig.pdf" for i in [1, 10, 50, 100] for (species, dm, pop) in MODELS]
+        [f"figures/{species}/{dm}/{pop}/n{i}/fig.pdf" for i in [1, 10, 100] for (species, dm, pop) in MODELS]
 
 # begin rules
 # these rules are fast and don't need to be jobbed out to the cluster
-localrules: smcpp_to_csv, fitcoal_to_dm, plot, smcpp_to_dm
+localrules: smcpp_to_csv, fitcoal_truncate, fitcoal_to_dm, plot, smcpp_to_dm
 
 rule run_stdpopsim:
     output:
@@ -178,12 +179,13 @@ rule smcpp_estimate:
     params:
         outdir=lambda wc, output: os.path.dirname(output[0]),
         mutation_rate=lambda wc: get_default_mutation_rate(wc.species),
-    threads: 8
+    threads: 8,
     resources:
         mem_mb=32000,
-        runtime=600,
+        runtime=1440,
     shell:
-        "smc++ estimate --cores {threads} -o {params.outdir} {params.mutation_rate} {input}"
+        "smc++ estimate --spline cubic --multi --knots 12 --timepoints 1e2 1e5 "
+        "-o {params.outdir} {params.mutation_rate} {input}"
 
 
 rule smcpp_to_csv:
@@ -245,31 +247,57 @@ rule psmc_estimate:
         r"methods/psmc/input/{seed}/{species}/{other_params}/n{num_samples}/combined.psmcfa"
     output:
         [
-            r"methods/psmc/output/{seed}/{species}/{other_params}/n{num_samples}/%s"
+            r"methods/{method,psmc(32)?}/output/{seed}/{species}/{other_params}/n{num_samples}/%s"
             % fn
             for fn in ["dm.pkl", "psmc_out.txt"]
         ],
     resources:
-        runtime=120
+        runtime=1440,
     script:
         "scripts/mspsmc.py"
 
-rule fitcoal_estimate:
+
+rule fitcoal_truncate:
     input:
         r"simulations/{seed}/{species}/{other_params}/afs.txt",
     output:
-        r"methods/fitcoal/output/{seed}/{species}/{other_params}/fitcoal.out.txt",
+        r"methods/fitcoal/output/{seed}/{species}/{other_params}/trunc.txt",
+    resources:
+        runtime=1440,
+    shell:
+        "java -cp %s/lib/FitCoal1.1/FitCoal.jar FitCoal.calculate.TruncateSFS "
+        "-input {input} > {output}" % BASE
+
+def get_fitcoal_trunc(wc, input):
+    try:
+        with open(input[1], "rt") as f:
+            txt = f.readlines()
+            m = re.match(r"The number of SFS types to be truncated or collapsed: (\d+) \(recommended\)", txt[4])
+            assert m
+            return int(m.group(1))
+    except:
+        # sometimes their tool just prints nothing, idk why. do no trunccation in this case.
+        return 0
+
+rule fitcoal_estimate:
+    input:
+        [r"simulations/{seed}/{species}/{other_params}/afs.txt",
+         r"methods/fitcoal/output/{seed}/{species}/{other_params}/trunc.txt"]
+    output:
+        r"methods/fitcoal/output/{seed}/{species}/{other_params}/fitcoal.out.txt"
     params:
         mu=lambda wc: get_default_mutation_rate(wc.species) * 1000,  # mutation rate per kb per generation
         genome_length_kbp=lambda wc: int(get_genome_length(wc.species) / 1000),  # length of genome in kb
         output_base=lambda wc, output: os.path.splitext(output[0])[0],
+        trunc=get_fitcoal_trunc,
     resources:
-        runtime=120
+        runtime=1440,
     shell:
         "java -cp %s/lib/FitCoal1.1/FitCoal.jar FitCoal.calculate.SinglePopDecoder "
         "-table %s/lib/FitCoal1.1/tables/ "
-        "-input {input} -output {params.output_base} "
+        "-input {input[0]} -output {params.output_base} "
         "-mutationRate {params.mu} -generationTime 1 "
+        "-omitEndSFS {params.trunc} "
         "-genomeLength {params.genome_length_kbp}" % (BASE, BASE)
 
 
@@ -306,7 +334,7 @@ def input_for_plot(wc):
     n = int(wc.num_samples)
     ret = {}
     for k in METHODS:
-        if k == "psmc" and n > 10:
+        if k.startswith("psmc") and n > 10:
             continue
         ret[k] = [
                 f"methods/{k}/output/{i}/{wc.species}/{wc.demographic_model}/{wc.population}/n{n}/dm.pkl"
