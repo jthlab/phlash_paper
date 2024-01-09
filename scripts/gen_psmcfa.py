@@ -2,6 +2,8 @@ from typing import TextIO
 
 import textwrap
 import tskit
+import tszip
+import gzip
 from tqdm.auto import tqdm
 
 
@@ -27,7 +29,8 @@ def gen_psmcfa(
 if __name__ == "__main__":
     wc = snakemake.wildcards
     nodes = tuple([int(i) for i in [wc.node1, wc.node2]])
-    ts = tskit.load(snakemake.input[0])
-    with open(snakemake.output[0], "w") as out:
+    ts = tszip.decompress(snakemake.input[0])
+    assert snakemake.output[0].endswith(".gz")
+    with gzip.open(snakemake.output[0], mode="wt") as out:
         tup = (wc.chrom,) + nodes
         gen_psmcfa(ts, "chr%s_%d_%d" % tup, nodes, out, w=100)

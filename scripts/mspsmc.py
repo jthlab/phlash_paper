@@ -150,7 +150,11 @@ if __name__ == "__main__":
     n = int(snakemake.wildcards.num_samples)
     nodes = [(2 * i, 2 * i + 1) for i in range(n)]
     p = msPSMC(snakemake.input[0])
-    dm = p.estimate()
+    assert snakemake.wildcards.method.startswith("psmc")
+    args = []
+    if snakemake.wildcards.method == "psmc64":
+        args = ["-p", "64*1"]
+    dm = p.estimate(*args)
     # scale up mutation and recombination rates
     dm = dm._replace(theta=dm.theta / 100, rho=dm.rho / 100)
     with open(snakemake.output[0], "wb") as f:
