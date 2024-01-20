@@ -2,3 +2,6 @@
 	path = lib/psmc
 	url = https://github.com/lh3/psmc
     ignore = untracked
+[submodule "lib/scrm"]
+	path = lib/scrm
+	url = https://github.com/scrm/scrm
