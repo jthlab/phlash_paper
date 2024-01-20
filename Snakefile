@@ -1,8 +1,10 @@
+import cyvcf2
 import os
 import stdpopsim
 import re
 import tskit
 import json
+import logging
 import pandas as pd
 import numpy as np
 import pickle
@@ -15,9 +17,12 @@ warnings.filterwarnings("ignore")
 from eastbay.size_history import DemographicModel, SizeHistory
 
 # METHODS = ["smcpp", "fitcoal", "eastbay", "psmc", "psmc32"]
-METHODS = ["eastbay", "psmc64", "smcpp"]
+METHODS = ["psmc64", "smcpp"]
+
+include: "util.py"
+
 MODELS = [
-    # ("AnaPla", "MallardBlackDuck_2L19", "Mallard"),
+    ("AnaPla", "MallardBlackDuck_2L19", "Mallard"),
     ("AnoGam", "GabonAg1000G_1A17", "GAS"),
     ("AraTha", "SouthMiddleAtlas_1D17", "SouthMiddleAtlas"),
     ("AraTha", "African3Epoch_1H18", "SouthMiddleAtlas"),
@@ -25,7 +30,7 @@ MODELS = [
     ("DroMel", "African3Epoch_1S16", "AFR"),
     ("DroMel", "OutOfAfrica_2L06", "AFR"),
     ("HomSap", "Africa_1T12", "AFR"), 
-    ("HomSap", "Africa_1B08", "African_Americans"), 
+    # ("HomSap", "Africa_1B08", "African_Americans"), 
     ("HomSap", "Zigzag_1S14", "generic"), 
     ("PanTro", "BonoboGhost_4K19", "bonobo"),
     ("PapAnu", "SinglePopSMCpp_1W22", "PAnubis_SNPRC"),
@@ -33,13 +38,12 @@ MODELS = [
 ]
 
 SAMPLE_SIZES = [1, 10, 100]
-NUM_REPLICATES = 10
-LENGTH_MULTIPLIER = 1.0
-# BCFTOOLS_CMD = "~/.local/bin/bcftools"
-BCFTOOLS_CMD = "/usr/bin/bcftools"
-BASE = "/home/terhorst/Dropbox (University of Michigan)/eastbay/manuscript_repo/assets"
+NUM_REPLICATES = 1
+LENGTH_MULTIPLIER = 1
+
 TURBO = "/home/jonth/turbo/jonth/eastbay_paper"
-os.environ["PSMC_PATH"] = os.path.join(BASE, "lib", "psmc", "psmc")
+os.environ["PSMC_PATH"] = os.path.join(config['basedir'], "lib", "psmc", "psmc")
+os.environ["TQDM_DISABLE"] = "1"
 
 wildcard_constraints:
     chrom=r"\w+",
@@ -50,54 +54,8 @@ wildcard_constraints:
     demographic_model=r"\w+",
 
 
-# workdir: "/scratch/jonth_root/jonth0/jonth/eastbay_paper/pipeline"
-workdir: "/scratch/eastbay_paper"
+workdir: config['workdir']
 
-def get_chroms(species_name):
-    species = stdpopsim.get_species(species_name)
-    return [
-        chrom.id
-        for chrom in species.genome.chromosomes
-        if chrom.ploidy == 2 and 
-        chrom.id.lower() not in ("mt", "x", "y") and
-        chrom.recombination_rate > 0
-    ]
-
-
-def get_default_mutation_rate(species_name):
-    return stdpopsim.get_species(species_name).genome.mean_mutation_rate
-
-
-def get_genome_length(species_name):
-    species = stdpopsim.get_species(species_name)
-    return sum(species.get_contig(chrom).length for chrom in get_chroms(species_name))
-
-
-def get_truth(species_name, demographic_model, population):
-    species = stdpopsim.get_species(species_name)
-    mu = get_default_mutation_rate(species_name)
-    if demographic_model == "Constant":
-        t = np.array([0.0])
-        Ne = np.array([species.population_size])
-    else:
-        model = species.get_demographic_model(demographic_model)
-        md = model.model.debug()
-        t_min = md.epochs[0].end_time * .5
-        t_max = 2 * md.epochs[-1].start_time + 1
-        assert np.isinf(md.epochs[-1].end_time)
-        t = np.geomspace(t_min, t_max, 1000)
-        pop_index = [p.name for p in model.populations].index(population)
-        Ne = md.population_size_trajectory(t)[:, pop_index]
-    eta = SizeHistory(t=t, c=1.0 / 2.0 / Ne)
-    true_dm = DemographicModel(eta=eta, theta=mu, rho=None)
-    return true_dm
-
-
-def ts_input_for_species(wc):
-    return [
-        f"simulations/{wc.seed}/{wc.species}/{wc.other_params}/chr%s.trees.tsz" % chrom
-        for chrom in get_chroms(wc.species)
-    ]
 
 # rule plot_loglik:
 #     input:
@@ -121,9 +79,6 @@ def ts_input_for_species(wc):
 
 rule all:
     input:
-        # "methods/smcpp/output/1/HomSap/Constant/pop_0/n2/dm.pkl",
-        # "methods/psmc/output/1/HomSap/Constant/pop_0/n1/psmc_out.txt",
-        # "methods/eastbay/output/1/HomSap/Constant/pop_0/n2/eb.dat",
         [f"figures/{species}/{dm}/{pop}/n{i}/fig.pdf" for i in SAMPLE_SIZES 
          for (species, dm, pop) in MODELS]
 
@@ -139,64 +94,51 @@ rule compress_ts:
     shell:
         "tszip {input}"
 
-
-rule run_stdpopsim:
+rule run_stdpopsim_scrm:
     output:
-        temporary("simulations/{seed}/{species}/{demographic_model}/{population}/chr{chrom}.trees")
+        temporary("simulations/{seed}/{species}/{demographic_model}/{population}/n{num_samples}/chr{chrom}.scrm_out.txt")
     resources:
         runtime=60,
         mem_mb=8000,
     run:
-        template = (
-            "stdpopsim "
-            "--msprime-change-model 0 dtwf "
-            "--msprime-change-model 100 hudson "
-            "{wildcards.species} %s -c {wildcards.chrom} -o {output} "
-            "-l %f -s {wildcards.seed} {wildcards.population}:%d "
-        )
+        args = scrm_stdpopsim_cmd(wildcards.species, wildcards.demographic_model, wildcards.population, wildcards.chrom, int(wildcards.num_samples), int(wildcards.seed), length_multiplier=LENGTH_MULTIPLIER)
+        shell("scrm %s > {output}" % args)
+
+rule run_stdpopsim_msp:
+    output:
+        temporary("simulations/{seed}/{species}/{demographic_model}/{population}/n{num_samples}/chr{chrom}.ts")
+    resources:
+        runtime=60,
+        mem_mb=8000,
+    run:
         if wildcards.demographic_model == "Constant":
             dm = ""
         else:
             dm = f" -d {wildcards.demographic_model} "
-        shell(template % (dm, LENGTH_MULTIPLIER, max(SAMPLE_SIZES)))
+        template = (
+            "stdpopsim "
+            "{wildcards.species} %s -c {wildcards.chrom} -o {output} "
+            "-l %f -s {wildcards.seed} {wildcards.population}:%d "
+        )
+        shell(template % (dm, LENGTH_MULTIPLIER, int(wildcards.num_samples)))
 
 
-rule gen_frequency_spectrum:
+rule convert_sim_to_output:
+    output: 
+        temporary("simulations/{seed}/{species}/{demographic_model}/{population}/n{num_samples}/chr{chrom}.vcf"),
+        "simulations/{seed}/{species}/{demographic_model}/{population}/n{num_samples}/chr{chrom}.afs.txt"
     input:
-        ts_input_for_species,
-    output:
-        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/afs.txt",
-    run:
-        afss = []
-        for ts in map(tszip.decompress, input):
-            ts = tskit.load(input[0])
-            n = int(wildcards.num_samples)
-            afs = ts.allele_frequency_spectrum(
-                sample_sets=[list(range(2 * n))], polarised=True, span_normalise=False
-            )[1:-1].astype(int)
-            afss.append(afs)
-        afs = np.sum(afss, 0)
-        with open(output[0], "wt") as f:
-            f.write(" ".join(map(str, afs)))
-
-
-rule ts2vcf:
+        chrom_input
+    script:
+        "scripts/convert_sim.py"
+        
+rule vcf_to_bcf:
     input:
-        "{path}.trees.tsz",
+        "{path}.vcf",
     output:
-        temporary("{path}.vcf")
-    run:
-        # ensure that coordinates are "1-based"
-        xform = lambda x: (1 + np.array(x)).astype(int)
-        with open(output[0], "wt") as f:
-            tszip.decompress(input[0]).write_vcf(f, position_transform=xform)
-
-rule vcf2bcf:
-    input: "{path}.vcf"
-    output: "{path}.bcf"
+        "{path}.bcf"
     shell:
-        "%s view -o {output[0]} {input[0]}" % BCFTOOLS_CMD
-
+        "%s view -o {output} {input}" % config['bcftools_path']
 
 rule index_bcf:
     input:
@@ -204,21 +146,20 @@ rule index_bcf:
     output:
         "{path}.bcf.csi",
     shell:
-        "%s index {input}" % BCFTOOLS_CMD
-
+        "%s index {input}" % config['bcftools_path']
 
 rule smcpp_vcf2smc:
     input:
         [
-            r"simulations/{seed}/{species}/{other_params}/{chrom}.bcf" + ext
+            r"simulations/{seed}/{species}/{other_params}/n{sample_size}/chr{chrom}.bcf" + ext
             for ext in ["", ".csi"]
         ],
     output:
-        r"methods/smcpp/input/{seed}/{species}/{other_params}/n{sample_size}/{chrom}.smc.txt.gz",
+        r"methods/smcpp/input/{seed}/{species}/{other_params}/n{sample_size}/chr{chrom}.smc.txt.gz",
     run:
-        sample_ids = ",".join([f"tsk_{i}" for i in range(int(wildcards.sample_size))])
+        sample_ids = ",".join([f"sample{i}" for i in range(int(wildcards.sample_size))])
         pop_str = "pop1:" + sample_ids
-        shell(f"smc++ vcf2smc {input[0]} {output} 1 {pop_str}")
+        shell(f"TQDM_DISABLE=1 smc++ vcf2smc {input[0]} {output} {wildcards.chrom} {pop_str}")
 
 
 def smcpp_input_for_estimate(wc):
@@ -242,8 +183,7 @@ rule smcpp_estimate:
         mem_mb=32000,
         runtime=1440,
     shell:
-        "smc++ estimate --cores 8 --spline cubic --knots 8 --timepoints 1e2 1e5 "
-        "-o {params.outdir} {params.mutation_rate} {input}"
+        "smc++ estimate --cores 8 --spline cubic --knots 16 -o {params.outdir} -- {params.mutation_rate} {input}"
 
 
 rule smcpp_to_csv:
@@ -271,12 +211,11 @@ rule smcpp_to_dm:
         with open(output[0], "wb") as f:
             pickle.dump(dm, f)
 
-
-rule ts_to_psmcfa:
+rule bcf_to_psmcfa:
     input:
-        "simulations/{other_params}/chr{chrom}.trees.tsz"
+        "simulations/{other_params}/chr{chrom}.bcf"
     output:
-        temporary("simulations/{other_params}/n{num_samples}/chr{chrom}_{node1}_{node2}.psmcfa.gz")
+        temporary("simulations/{other_params}/chr{chrom}_{sample,sample\d+}.psmcfa.gz")
     resources:
         runtime=120
     script:
@@ -285,7 +224,7 @@ rule ts_to_psmcfa:
 def psmcfa_input_for_species(wc):
     n = int(wc.num_samples)
     return [
-        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s_%d_%d.psmcfa.gz" % (chrom, 2 * i, 2 * i + 1)
+        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s_sample%d.psmcfa.gz" % (chrom, i)
         for chrom in get_chroms(wc.species)
         for i in range(n)
     ]
@@ -295,15 +234,15 @@ rule combine_psmcfa:
         psmcfa_input_for_species,
     output: r"methods/psmc/input/{seed}/{species}/{other_params}/n{num_samples}/combined.psmcfa.gz"
     run:
-        with open(output[0], "wt") as f:
+        with open(output[0], "wb") as f:
             for fn in input:
-                with open(fn, "rt") as fin:
+                with open(fn, "rb") as fin:
                     shutil.copyfileobj(fin, f)
 
 
 rule uncompress_gzip:
-    input: "{file}.gz"
-    output: temporary("{file}")
+    input: "{path}/combined.psmcfa.gz"
+    output: temporary("{path}/combined.psmcfa")
     shell: "gunzip {input[0]}"
 
 rule psmc_estimate:
@@ -330,7 +269,7 @@ rule fitcoal_truncate:
         runtime=1440,
     shell:
         "java -cp %s/lib/FitCoal1.1/FitCoal.jar FitCoal.calculate.TruncateSFS "
-        "-input {input} > {output}" % BASE
+        "-input {input} > {output}" % config['basedir']
 
 def get_fitcoal_trunc(wc, input):
     try:
@@ -362,7 +301,7 @@ rule fitcoal_estimate:
         "-input {input[0]} -output {params.output_base} "
         "-mutationRate {params.mu} -generationTime 1 "
         "-omitEndSFS {params.trunc} "
-        "-genomeLength {params.genome_length_kbp}" % (BASE, BASE)
+        "-genomeLength {params.genome_length_kbp}" % ((config['basedir'],) * 2)
 
 
 rule fitcoal_to_dm:
@@ -380,19 +319,19 @@ rule fitcoal_to_dm:
             pickle.dump(dm, f)
 
 
-rule eastbay_estimate:
-    input:
-        ts_input_for_species,
-    output:
-        r"methods/eastbay/output/{seed}/{species}/{other_params}/n{num_samples}/dm.pkl",
-    resources:
-        gpus=1,
-        slurm_partition="spgpu",
-        slurm_extra="--gpus 1",
-        runtime=120,
-        mem_mb=32000,
-    script:
-        "scripts/eb.py"
+# rule eastbay_estimate:
+#     input:
+#         ts_input_for_species,
+#     output:
+#         r"methods/eastbay/output/{seed}/{species}/{other_params}/n{num_samples}/dm.pkl",
+#     resources:
+#         gpus=1,
+#         slurm_partition="spgpu",
+#         slurm_extra="--gpus 1",
+#         runtime=120,
+#         mem_mb=32000,
+#     script:
+#         "scripts/eb.py"
 
 def input_for_plot(wc):
     n = int(wc.num_samples)

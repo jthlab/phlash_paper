@@ -1,3 +1,7 @@
 resources:
   - gpus=1
 cores: "all"
+config:
+  - basedir="/home/terhorst/Dropbox (University of Michigan)/Research/eastbay/paper_repo"
+  - workdir="/scratch/eastbay_paper/simulation_results_full"
+  - bcftools_path="/usr/bin/bcftools"

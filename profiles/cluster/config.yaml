@@ -11,3 +11,6 @@ keep-going: True
 rerun-incomplete: True
 printshellcmds: True
 jobscript: "/home/jonth/eastbay_paper/slurm-jobscript.sh"
+bcftools_cmd: "~/.local/bin/bcftools"
+workdir: "/scratch/jonth_root/jonth0/jonth/eastbay_paper/pipeline"
+basedir: "/home/jonth/eastbay_paper"

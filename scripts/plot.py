@@ -9,7 +9,7 @@ fig, ax = plt.subplots(figsize=(8, 5))
 METHOD_TITLES = {
     "fitcoal": "FitCoal",
     "smcpp": "SMC++",
-    "psmc": "PSMC",
+    "psmc64": "PSMC",
     "eastbay": "eastbay",
 }
 
@@ -49,5 +49,4 @@ for i, (method, fns) in enumerate(snakemake.input.items()):
 eastbay.liveplot.style_axis(ax)
 ax.legend()
 ax.set_xlim(t1, tM)
-ax.set_ylim(1e3, 1e6)
 fig.savefig(snakemake.output[0])
