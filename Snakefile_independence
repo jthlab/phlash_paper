@@ -1,0 +1,11 @@
+def input_for_independence_plot(wc):
+    return ["simulations/1/{species}/{demographic_model}/{pop}/n1/chr{chrom}.tsz"
+        for species, demographic_model, pop in MODELS
+        for chrom in get_chroms(species)
+    ]
+
+rule plot_independence:
+    input: input_for_independence_plot
+    output: 'figures/independence/plot.pdf'
+    script: 'notebooks/independence.py'
+

@@ -5,3 +5,6 @@ pipeline
 venv
 eastbay_paper
 lib/FitCoal1.1/tables
+.ipynb_checkpoints
+notebooks/*.ipynb
+notebooks/*.pdf

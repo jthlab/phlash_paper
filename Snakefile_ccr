@@ -1,0 +1,71 @@
+import os.path
+import numpy as np
+import pickle
+
+def hash_params(params):
+    return hashlib.sha256(str(params).encode()).hexdigest()[:10]
+
+def get_metadata():
+    return pickle.load(open(os.path.join(config['unified_path'], 'metadata.pkl'), 'rb'))
+
+def ccr_unified_nodes():
+    metadata = get_metadata()
+    yri = [
+        p.id for p in metadata['populations']
+        if p.metadata['name'].startswith("Yoruba") or 
+        p.metadata['name'] == "YRI"
+    ]
+    chb = [
+       p.id for p in metadata['populations']
+       if p.metadata['name'].startswith("Han")
+       or p.metadata['name'] == "CHB"
+    ]
+    d = {}
+    d['YRI'], d['CHB'] = [
+        [
+            i.nodes 
+            for i, pid in zip(metadata['individuals'], metadata['individual_populations'])
+            if pid in pop_ids
+        ]
+        for pop_ids in (yri, chb)
+    ]
+    d['YRI::CHB'] = list(zip(np.array(d['YRI'])[:, 0], np.array(d['CHB'])[:, 0]))
+    return d
+
+#     real_data = [
+#         f"methods/eastbay/output/unified/{hash_params(nodes)}/dm.pkl"
+#         for nodes in yri_nodes, chb_nodes, yri_chb_nodes
+#     ]
+#     n_yri = len(yri_nodes)
+#     n_chb = len(chb_nodes)
+#     simulated_data = [
+#         f"methods/eastbay/output/HomSap/OutOfAfrica_3G09/{pop}/n{num_samples}/1/dm.pkl"
+#         for pop, num_samples in [("YRI", n_yri), ("CHB", n_chb)]
+#     ]
+#     return real_results + simulated_results
+
+
+rule ccr_nodes:
+    output:
+        [f"methods/eastbay/input/unified/ccr/{pop}/nodes.pkl" for pop in ("YRI", "CHB", "YRI::CHB")]
+    run:
+        d = ccr_unified_nodes()
+        for pop, nodes in d.items():
+            path = f"methods/eastbay/input/unified/ccr/{pop}/nodes.pkl"
+            pickle.dump(nodes, open(path, "wb"))
+        
+def input_for_ccr_plot(wildcards):
+    metadata = get_metadata()
+    d = ccr_unified_nodes()
+    real = [f"methods/eastbay/output/unified/ccr/{pop}/dm.pkl" for pop in ("YRI", "CHB", "YRI::CHB")]
+    ps = [(k, len(v)) for k, v in d.items()]
+    simulated = [f"methods/eastbay/output/simulated/1/HomSap/OutOfAfrica_3G09/{pop}/n{num_samples}/dm.pkl" for pop, num_samples in ps]
+    return real + simulated
+
+rule plot_ccr:
+    input: 
+        input_for_ccr_plot
+    output: 
+        'figures/ccr/plot.pdf'
+    script:
+        "notebooks/ccr.py"

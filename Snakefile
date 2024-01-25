@@ -1,4 +1,5 @@
 import cyvcf2
+import functools
 import os
 import stdpopsim
 import re
@@ -17,7 +18,7 @@ warnings.filterwarnings("ignore")
 from eastbay.size_history import DemographicModel, SizeHistory
 
 # METHODS = ["smcpp", "fitcoal", "eastbay", "psmc", "psmc32"]
-METHODS = ["psmc64", "smcpp"]
+METHODS = ["psmc64", "smcpp", "fitcoal"]
 
 include: "util.py"
 
@@ -48,7 +49,7 @@ os.environ["TQDM_DISABLE"] = "1"
 wildcard_constraints:
     chrom=r"\w+",
     species=r"\w+",
-    population=r"\w+",
+    population=r"(\w+|\w+::\w+)",
     num_samples=r"[0-9]+",
     seed=r"[0-9]+",
     demographic_model=r"\w+",
@@ -77,10 +78,25 @@ workdir: config['workdir']
 #     input:
 #         "figures/loglik.pdf"
 
+# rule all:
+#     input:
+#         [f"figures/{species}/{dm}/{pop}/n{i}/fig.pdf" for i in SAMPLE_SIZES 
+#          for (species, dm, pop) in MODELS]
+
 rule all:
     input:
-        [f"figures/{species}/{dm}/{pop}/n{i}/fig.pdf" for i in SAMPLE_SIZES 
-         for (species, dm, pop) in MODELS]
+        "figures/ccr/plot.pdf"
+
+module ccr:
+    snakefile: "Snakefile_ccr"
+    config: config
+
+module unified:
+    snakefile: "Snakefile_unified"
+    config: config
+
+use rule * from unified
+use rule * from ccr
 
 # begin rules
 # these rules are fast and don't need to be jobbed out to the cluster
@@ -118,11 +134,20 @@ rule run_stdpopsim_msp:
         template = (
             "stdpopsim "
             "{wildcards.species} %s -c {wildcards.chrom} -o {output} "
-            "-l %f -s {wildcards.seed} {wildcards.population}:%d "
+            "-l %f -s {wildcards.seed} %s"
         )
-        shell(template % (dm, LENGTH_MULTIPLIER, int(wildcards.num_samples)))
+        population = wildcards.population
+        n = int(wildcards.num_samples)
+        if "::" in population:
+            pop1, pop2 = population.split("::")
+            assert n % 2 == 0
+            n //= 2
+            pop_str = f"{pop1}:{n} {pop2}:{n}"
+        else:
+            pop_str = f"{population}:{n}"
+        shell(template % (dm, LENGTH_MULTIPLIER, pop_str))
 
-
+# convert simulated output to vcf and afs
 rule convert_sim_to_output:
     output: 
         temporary("simulations/{seed}/{species}/{demographic_model}/{population}/n{num_samples}/chr{chrom}.vcf"),
@@ -131,6 +156,22 @@ rule convert_sim_to_output:
         chrom_input
     script:
         "scripts/convert_sim.py"
+
+def _input_for_aggregate(wc):
+    return [
+        "simulations/{seed}/{species}/{demographic_model}/{population}/n{num_samples}/chr%s.afs.txt" % chrom 
+        for chrom in get_chroms(wc.species)
+    ]
+
+rule aggregate_afs:
+    input:
+        _input_for_aggregate
+    output:
+        "simulations/{seed}/{species}/{demographic_model}/{population}/n{num_samples}/afs.txt"
+    run:
+        a = list(map(np.readtxt, input))
+        with open(output[0], "wt") as f:
+            f.write(" ".join(map(int, a)))
         
 rule vcf_to_bcf:
     input:
@@ -183,7 +224,7 @@ rule smcpp_estimate:
         mem_mb=32000,
         runtime=1440,
     shell:
-        "smc++ estimate --cores 8 --spline cubic --knots 16 -o {params.outdir} -- {params.mutation_rate} {input}"
+        "smc++ estimate --cores 8 --multi --lambda 1. --knots 32 --spline cubic -o {params.outdir} {params.mutation_rate} {input}"
 
 
 rule smcpp_to_csv:
@@ -221,13 +262,6 @@ rule bcf_to_psmcfa:
     script:
         "scripts/gen_psmcfa.py"
 
-def psmcfa_input_for_species(wc):
-    n = int(wc.num_samples)
-    return [
-        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s_sample%d.psmcfa.gz" % (chrom, i)
-        for chrom in get_chroms(wc.species)
-        for i in range(n)
-    ]
 
 rule combine_psmcfa:
     input:
@@ -319,25 +353,27 @@ rule fitcoal_to_dm:
             pickle.dump(dm, f)
 
 
-# rule eastbay_estimate:
-#     input:
-#         ts_input_for_species,
-#     output:
-#         r"methods/eastbay/output/{seed}/{species}/{other_params}/n{num_samples}/dm.pkl",
-#     resources:
-#         gpus=1,
-#         slurm_partition="spgpu",
-#         slurm_extra="--gpus 1",
-#         runtime=120,
-#         mem_mb=32000,
-#     script:
-#         "scripts/eb.py"
+rule eastbay_estimate:
+    input:
+        vcf_input_for_species
+    output:
+        r"methods/eastbay/output/simulated/{seed}/{species}/{other_params}/n{num_samples}/dm.pkl",
+    params:
+        mutation_rate=lambda wc: get_default_mutation_rate(wc.species)
+    resources:
+        gpus=1,
+        slurm_partition="spgpu",
+        slurm_extra="--gpus 1",
+        runtime=120,
+        mem_mb=32000,
+    script:
+        "scripts/eb.py"
 
 def input_for_plot(wc):
     n = int(wc.num_samples)
     ret = {}
     for k in METHODS:
-        if k.startswith("psmc") and n > 1:
+        if (k.startswith("psmc") or k == "smcpp") and n > 10:
             continue
         ret[k] = [
                 f"methods/{k}/output/{i}/{wc.species}/{wc.demographic_model}/{wc.population}/n{n}/dm.pkl"

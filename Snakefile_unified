@@ -1,0 +1,60 @@
+import tszip
+import numpy as np
+import eastbay as eb
+import pickle
+import os
+import glob
+import re
+
+def unified_chroms():
+    template = "hgdp_tgp_sgdp_high_cov_ancients_{}.dated.trees.tsz"
+    path = os.path.join(config['unified_path'], template.format("*"))
+    files = glob.glob(path)
+    chroms = [
+        re.search(template.format(r"(chr\d+_[pq])"), f)[1]
+        for f in files
+    ]
+    return chroms
+
+def subsample_unified_chrom(wc, input, output):
+    chrom_path = os.path.join(
+        config['unified_path'],
+        f"hgdp_tgp_sgdp_high_cov_ancients_chr{wc.chrom}.dated.trees.tsz"
+    )
+    ts = tszip.decompress(chrom_path)
+    nodes = pickle.load(open(input[0], "rb"))
+    nodes_flat = [x for n in nodes for x in n]
+    assert nodes_flat
+    # not necessary, but cuts down on memory usage and makes the trim step faster
+    new_ts, m = ts.simplify(samples=nodes_flat, map_nodes=True)
+    # the chromosomes are organized into different arms, however the tree sequence spans the entire
+    # chromosome. so there is a big "missing" chunk which will appear as nonsegregating if we just
+    # ignore it.
+    # as a crude hack, just restrict to the interval containing all the sites. this will throw away
+    # a few hundred flanking bps on either side, but in such a large dataset, the effect is minimal.
+    pos = new_ts.tables.sites.position
+    new_ts = new_ts.keep_intervals([[pos.min(), pos.max()]]).trim()
+    tszip.compress(new_ts, output[0])
+
+rule unified_subsample:
+    input: 
+        "methods/eastbay/input/unified/{analysis}/nodes.pkl"
+    output: 
+        "methods/eastbay/input/unified/{analysis}/chr{chrom}.tsz"
+    run: 
+        subsample_unified_chrom(wildcards, input, output)
+
+def input_for_eb_unified(wc):
+    return [
+        "methods/eastbay/input/unified/{params}/%s.tsz" % chrom
+        for chrom in unified_chroms()
+    ]
+
+rule eb_unified:
+    input: input_for_eb_unified
+    output: 
+        "methods/eastbay/output/unified/{params}/dm.pkl"
+    params: 
+        mutation_rate=1.29e-8
+    script: 
+        "scripts/eb.py"

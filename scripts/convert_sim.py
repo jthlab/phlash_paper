@@ -4,6 +4,7 @@ import re
 
 def convert_scrm(snakemake):
     wc = snakemake.wildcards
+    two_pop = "::" in wc.population
     with open(snakemake.input[0], "rt") as scrm_out: 
         cmd_line = next(scrm_out).strip()
         L = int(re.search(r'-r [\d.]+ (\d+)', cmd_line)[1])
@@ -26,7 +27,14 @@ def convert_scrm(snakemake):
                 pos, _, *gts = line.strip().split(" ")
                 pos = int(1 + float(pos))  # vcf is 1-based; if a variant has pos=0 it messes up bcftools
                 cols = [contig, str(pos), ".", "A", "C", ".", "PASS", ".", "GT"]
-                cols += ["|".join(gt) for gt in zip(gts[::2], gts[1::2])]
+                if two_pop:
+                    # if there are two populations then we will combine haplotypes from each population
+                    n = len(gts)
+                    assert n % 2 == 0
+                    gtz = zip(gts[:n // 2], gts[n // 2:])
+                else:
+                    gtz = zip(gts[::2], gts[1::2])
+                cols += ["|".join(gt) for gt in gtz]
                 print("\t".join(cols), file=vcf)
 
 

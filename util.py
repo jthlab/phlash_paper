@@ -5,7 +5,7 @@ import stdpopsim
 from functools import cache
 from eastbay.size_history import DemographicModel, SizeHistory
 
-
+@cache
 def get_chroms(species_name):
     species = stdpopsim.get_species(species_name)
     return [
@@ -39,8 +39,13 @@ def get_truth(species_name, demographic_model, population):
         t_max = 2 * md.epochs[-1].start_time + 1
         assert np.isinf(md.epochs[-1].end_time)
         t = np.r_[0., np.geomspace(t_min, t_max, 1000)]
-        pop_index = [p.name for p in model.populations].index(population)
-        c, _ = md.coalescence_rate_trajectory(t, {population: 2})
+        if "::" in population:
+            # assume two popualtions, POP1::POP2. (this is very brittle)
+            pop1, pop2 = population.split("::")
+            pop_dict = {pop1: 1, pop2: 1}
+        else:
+            pop_dict = {population: 2}
+        c, _ = md.coalescence_rate_trajectory(t, pop_dict)
     eta = SizeHistory(t=t, c=c)
     true_dm = DemographicModel(eta=eta, theta=mu, rho=None)
     return true_dm
@@ -52,6 +57,26 @@ def ts_input_for_species(wc):
         for chrom in get_chroms(wc.species)
     ]
 
+
+def ts_input_for_species(wc):
+    return [
+        f"simulations/{wc.seed}/{wc.species}/{wc.other_params}/chr%s.trees.tsz" % chrom
+        for chrom in get_chroms(wc.species)
+    ]
+
+def vcf_input_for_species(wc):
+    template = "simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s.bcf" 
+    ret = {'vcf': [template % chrom for chrom in get_chroms(wc.species)]}
+    ret['csi'] = [path + '.csi' for path in ret['vcf']]
+    return ret['csi']
+
+def psmcfa_input_for_species(wc):
+    n = int(wc.num_samples)
+    return [
+        r"simulations/{seed}/{species}/{other_params}/n{num_samples}/chr%s_sample%d.psmcfa.gz" % (chrom, i)
+        for chrom in get_chroms(wc.species)
+        for i in range(n)
+    ]
 
 def scrm_stdpopsim_cmd(species_name, demographic_model, population, chrom, sample_size, seed, length_multiplier=1.0):
     species = stdpopsim.get_species(species_name)
@@ -69,9 +94,13 @@ def scrm_stdpopsim_cmd(species_name, demographic_model, population, chrom, sampl
     rho = 4 * N0 * chrom.recombination_map.rate[0] * L
     g = dm.model.to_demes()
     samples = [0] * len(g.demes)
-    i = [d.name for d in g.demes].index(population)
-    n = 2 * sample_size
-    samples[i] = n
+    if "::" in population:
+        populations = population.split("::")
+    else:
+        populations = [population]
+    for pop in populations:
+        i = [d.name for d in g.demes].index(pop)
+        samples[i] += sample_size
     cmd = demes.to_ms(g, N0=N0, samples=samples)
     args = " ".join(
         map(
@@ -79,15 +108,23 @@ def scrm_stdpopsim_cmd(species_name, demographic_model, population, chrom, sampl
             ["-t", theta, "-r", rho, L, "--transpose-segsites", "-SC", "abs", "-p", 14, "-oSFS", "-seed", seed],
         )
     )
-    return f"{n} 1 {cmd} {args}"
+    return f"{2 * sample_size} 1 {cmd} {args}"
 
 
 @cache
 def get_N0(species_name, demographic_model, population):
+    if (species_name, demographic_model, population) ==  ("HomSap", "OutOfAfrica_3G09", "CHB"):
+        # this takes >1m to compute
+        return 5984.280709544825
     species = stdpopsim.get_species(species_name)
     dm = species.get_demographic_model(demographic_model)
     # get effective N0 for this population by mean coalescence time
-    N0 = dm.model.debug().mean_coalescence_time({population: 2}) / 2
+    if "::" in population:
+        pop1, pop2 = population.split("::")
+        pop_dict = {pop1: 1, pop2: 1}
+    else:
+        pop_dict = {population: 2}
+    N0 = dm.model.debug().mean_coalescence_time(pop_dict) / 2
     return N0
 
 
