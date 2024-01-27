@@ -28,7 +28,7 @@ import os.path
 
 try:
     input_ = snakemake.input
-    output = snakemake.output
+    output = snakemake.output[0]
 except NameError:
     input_ = """
     methods/eastbay/output/unified/ccr/YRI/dm.pkl
@@ -44,7 +44,9 @@ except NameError:
     ]
     output = "/dev/null"
 
-input_d = {"real": input_[:3], "simulated": input_[3:]}
+POPS = ["YRI", "CHB", ("YRI", "CHB")]
+input_d = {k: dict(zip(POPS, getattr(input_, k)))
+           for k in ("real", "simulated")}
 
 # +
 # compute ccr curves for real and simulated data
@@ -57,24 +59,15 @@ ccrs = {"real": [], "simulated": []}
 
 for k in ccrs:
     dms = {}
-    for pop, file in zip(["YRI", "CHB", "YRI::CHB"], input_d[k]):
+    for pop, file in input_d[k].items():
         dms[pop] = pickle.load(open(file, "rb"))
     for _ in range(1000):
         dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms.items()}
         ccrs[k].append(
             2
-            * dms_i["YRI::CHB"].eta(T, Ne=True)
+            * dms_i[("YRI","CHB")].eta(T, Ne=True)
             / (dms_i["YRI"].eta(T, Ne=True) + dms_i["CHB"].eta(T, Ne=True))
         )
-# -
-import matplotlib.pyplot as plt
-for path in input_d['real']:
-    dms = pickle.load(open(path, 'rb'))
-    Ne = [dm.eta(T, Ne=True) for dm in dms]
-    plt.plot(T, np.median(Ne, 0))
-plt.xscale('log')
-plt.yscale('log')
-
 
 # +
 # compute ratio curves for real and simulated data
@@ -82,7 +75,7 @@ ratios = {"real": [], "simulated": []}
 
 for k in ratios:
     dms = {}
-    for pop, file in zip(["YRI", "CHB", "YRI::CHB"], input_d[k]):
+    for pop, file in input_d[k].items():
         dms[pop] = pickle.load(open(file, "rb"))
     for _ in range(1000):
         dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms.items()}
@@ -156,7 +149,7 @@ ax3.yaxis.set_visible(False)
 ax3.spines["left"].set_visible(False)
 fig.suptitle("YRI-CHB divergence time estimation")
 fig.tight_layout()
-fig.savefig("yri_chb_div.pdf")
+fig.savefig(output)
 # -
 
 np.array(data).shape

@@ -35,18 +35,15 @@ def vcf_iter(vcf, sample):
 
 
 if __name__ == "__main__":
-    try:
-        wc = snakemake.wildcards
-        chrom = wc.chrom
-        sample = wc.sample
-        output = snakemake.output[0]
-        input_ = snakemake.input[0]
-    except:
-        sample, chrom, input_, output = sys.argv[1:]
+    wc = snakemake.wildcards
+    chrom = wc.chrom
+    sample = "sample" + wc.i
+    output = snakemake.output[0]
+    input_ = snakemake.input[0]
     # nodes = tuple([int(i) for i in [wc.node1, wc.node2]])
     # ts = tszip.decompress(snakemake.input[0])
-        assert output.endswith(".gz")
-    contig = f"chr{chrom}_sample{sample}"
+    assert output.endswith(".gz")
+    contig = f"chr{chrom}_{sample}"
     vcf = cyvcf2.VCF(input_, gts012=True, samples=[sample])
     i = vcf.seqnames.index(chrom)
     L = vcf.seqlens[i]

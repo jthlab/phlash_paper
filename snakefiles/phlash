@@ -1,0 +1,16 @@
+import eastbay as eb
+
+rule phlash_estimate:
+    input: "{analysis}/phlash/config.pkl"
+    output: "{analysis}/phlash/estimates.pkl"
+    resources:
+        gpus=1,
+        slurm_partition="spgpu",
+        slurm_extra="--gpus 1",
+    run:
+        conf = load_file(input[0])
+        path, nodes = conf['test_data']
+        test_data = eb.contig(path, nodes)
+        train_data = [eb.contig(path, nodes) for path, nodes in conf['train_data']]
+        res = eb.fit(data=train_data, test_data=test_data, mutation_rate=conf['mutation_rate'])
+        dump_file(res, output[0])

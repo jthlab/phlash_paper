@@ -1,0 +1,124 @@
+import os.path
+import numpy as np
+import pickle
+import tszip
+
+POPULATIONS = dict(zip(range(3), ("YRI", "CHB", ("YRI", "CHB"))))
+
+
+def ccr_unified_nodes(metadata):
+    yri = [
+        p.id
+        for p in metadata["populations"]
+        if p.metadata["name"].startswith("Yoruba") or p.metadata["name"] == "YRI"
+    ]
+    chb = [
+        p.id
+        for p in metadata["populations"]
+        if p.metadata["name"].startswith("Han") or p.metadata["name"] == "CHB"
+    ]
+    d = {}
+    d["YRI"], d["CHB"] = [
+        np.array(
+            [
+                i.nodes
+                for i, pid in zip(
+                    metadata["individuals"], metadata["individual_populations"]
+                )
+                if pid in pop_ids
+            ]
+        )
+        for pop_ids in (yri, chb)
+    ]
+    d[("YRI", "CHB")] = list(zip(d["YRI"].reshape(-1), d["CHB"].reshape(-1)))
+    return d
+
+
+rule ccr_sim_params:
+    input:
+        "unified/metadata.pkl",
+    output:
+        "ccr/simulations/params.json",
+    run:
+        metadata = load_file(input[0])
+        d = ccr_unified_nodes(metadata)
+        pop_dict = {p: len(d[p]) for p in ["YRI", "CHB"]}
+        params = {
+            "species": "HomSap",
+            "model": "OutOfAfrica_3G09",
+            "populations": pop_dict,
+            "seed": 1,
+        }
+        dump_file(params, output[0])
+
+
+rule ccr_real_params:
+    input:
+        "unified/metadata.pkl",
+    output:
+        "ccr/unified/params.pkl",
+    run:
+        metadata = load_file(input[0])
+        d = ccr_unified_nodes(metadata)
+        d.pop(("YRI", "CHB"))  # for subsetting, we don't worry about the combined nodes
+        params = {"nodes": d}
+        dump_file(params, output[0])
+
+
+rule ccr_phlash_config_real:
+    input:
+        chroms=expand("ccr/unified/chr{chrom}.tsz", chrom=unified_chroms()),
+        node_maps=expand("ccr/unified/chr{chrom}.node_map.pkl", chrom=unified_chroms()),
+        metadata="unified/metadata.pkl",
+    output:
+        "ccr/unified/pop{i}/phlash/config.pkl"
+    run:
+        metadata = load_file(input.metadata)
+        i = int(wildcards.i)
+        pop = POPULATIONS[i]
+        nodes = ccr_unified_nodes(metadata)[pop]
+        d = {}
+        for chrom, node_map_path in zip(input.chroms, input.node_maps):
+            node_map = load_file(node_map_path)
+            d[chrom] = list(map(tuple, node_map[nodes]))
+        pairs = list(d.items())
+        ret = {}
+        ret["test_data"] = pairs[0]
+        ret["train_data"] = pairs[1:]
+        ret['mutation_rate'] = 1.29e-8
+        dump_file(ret, output[0])
+
+
+rule ccr_phlash_config_simulated:
+    input:
+        chroms=expand("ccr/simulations/chr{chrom}.tsz", chrom=range(1, 23)),
+        sim_params="ccr/simulations/params.json",
+    output:
+        "ccr/simulations/pop{i}/phlash/config.pkl",
+    run:
+        sim_params = load_file(input.sim_params)
+        pop_dict = sim_params["populations"]
+        i = int(wildcards.i)
+        pop = POPULATIONS[i]
+        ts = tszip.decompress(input.chroms[-1])
+        yri_id, chb_id = [[p.id for p in ts.populations() if p.metadata['name'] == n] for n in ("YRI", "CHB")]
+        yri_nodes, chb_nodes = [np.array([i.nodes for i in ts.individuals() if ts.individual_populations[i.id] == pid]) for pid in (yri_id, chb_id)]
+        combined_nodes = list(zip(yri_nodes.flat, chb_nodes.flat))
+        nodes = {'YRI': yri_nodes, 'CHB': chb_nodes, ('YRI', 'CHB'): combined_nodes}[pop]
+        nodes = list(map(tuple, nodes))
+        pairs = [(chrom, nodes) for chrom in input.chroms]
+        ret = {}
+        ret['test_data'] = pairs[0]
+        ret['train_data'] = pairs[1:]
+        ret['mutation_rate'] = 1.29e-8
+        dump_file(ret, output[0])
+
+
+rule plot_ccr:
+    input:
+        simulated=expand("ccr/simulations/pop{i}/phlash/estimates.pkl", i=POPULATIONS),
+        real=expand("ccr/unified/pop{i}/phlash/estimates.pkl", i=POPULATIONS),
+    output:
+        "figures/ccr/plot.pdf",
+    script:
+        "../notebooks/ccr.py"

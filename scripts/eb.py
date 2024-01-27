@@ -7,6 +7,7 @@ import tskit
 import tszip
 
 contigs = []
+breakpoint()
 for f in snakemake.input:
     if f.endswith("tsz"):
         ts = tszip.decompress(f)

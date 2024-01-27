@@ -1,0 +1,61 @@
+import numpy as np
+import sh
+
+import stdpopsim
+
+from eastbay.sim import stdpopsim_dataset, compute_truth
+
+bcftools = sh.Command('bcftools')
+
+def get_chroms(species_name):
+    species = stdpopsim.get_species(species_name)
+    for chrom in species.genome.chromosomes:
+        if all(
+            [
+                chrom.ploidy == 2,
+                re.match(r"\d+", chrom.id),
+                chrom.recombination_rate > 0,
+            ]
+        ):
+            yield chrom.id
+
+def run_simulation(wc, input, output):
+    params = load_file(input[0])
+    length_multiplier = params.get('length_multiplier', 1.0)
+    bcf = wc.ext == 'bcf'
+    res = stdpopsim_dataset(
+        species_id=params['species'],
+        model_id=params['model'],
+        populations=params['populations'],
+        contigs=[wc.chrom],
+        seed=params['seed'],
+        options=dict(return_vcf=bcf, length_multiplier=length_multiplier)
+    )
+    data = res['data'][wc.chrom]
+    if not bcf:
+        tszip.compress(data.ts, output[0])
+    else:
+        bcftools.view('-o', output[0], _in=data)
+        bcftools.index(output[0])
+    
+rule simulate_stdpopsim:
+    input: 
+        "{analysis}/simulations/params.json"
+    output:
+        "{analysis}/simulations/chr{chrom}.{ext,(tsz|bcf)}"
+    run:
+        run_simulation(wildcards, input, output)
+
+rule truth_size_history_function:
+    input: 
+        "{analysis}/simulations/params.json"
+    output:
+        "{analysis}/simulations/truth.pkl"
+    run:
+        params = load_file(input[0])
+        species = stdpopsim.get_species(params['species'])
+        model = species.get_demographic_model(params['model'])
+        populations = params['populations']
+        assert len(populations) in (1, 2)
+        truth = compute_truth(model, list(populations))
+        dump_file(truth, output[0])

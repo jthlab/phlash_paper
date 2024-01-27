@@ -1,0 +1,69 @@
+import tszip
+import numpy as np
+import eastbay as eb
+import pickle
+import json
+import os
+import os.path
+import glob
+import re
+
+def path_for_chrom(chrom):
+    return os.path.join(
+        config['unified_path'], 
+        f'hgdp_tgp_sgdp_high_cov_ancients_chr{chrom}.dated.trees.tsz'
+    )
+
+def unified_chroms():
+    "all chrosomal arms present in the unified dataset"
+    template = "hgdp_tgp_sgdp_high_cov_ancients_chr{}.dated.trees.tsz"
+    # FIXME: sh < 2.0.6 monkey-patches glob.glob, disrespecting root_dir and other args.
+    # https://github.com/amoffat/sh/issues/708
+    files = glob.glob(template.format("*"), root_dir=config['unified_path'])
+    pattern = template.format(r"(\d+_[pq])")
+    for f in files:
+        m = re.match(pattern, f)
+        assert m
+        yield m[1]
+
+rule metadata:
+    output: 
+        'unified/metadata.pkl'
+    run:
+        chr21 = tszip.decompress(path_for_chrom('21_q'))
+        metadata = {
+            'populations': list(chr21.populations()),
+            'individual_populations': chr21.individual_populations,
+            'individuals': list(chr21.individuals())
+        }
+        for pop in metadata['populations']:
+            pop.metadata = json.loads(pop.metadata)
+        dump_file(metadata, output[0])
+
+rule unified_subsample:
+    input: 
+        "{analysis}/unified/params.pkl"
+    output: 
+        tsz="{analysis}/unified/chr{chrom}.tsz",
+        node_map="{analysis}/unified/chr{chrom}.node_map.pkl"
+    run: 
+        nodes = load_file(input[0])['nodes']
+        chrom_path = path_for_chrom(wildcards.chrom)
+        ts = tszip.decompress(chrom_path)
+        nodes_flat = [x 
+            for pop in nodes 
+            for row in nodes[pop] 
+            for x in row
+        ]
+        assert nodes_flat
+        assert len(set(nodes_flat)) == len(nodes_flat)
+        new_ts, node_map = ts.simplify(samples=nodes_flat, map_nodes=True)
+        # the chromosomes are organized into different arms, however the tree sequence spans the entire
+        # chromosome. so there is a big "missing" chunk which will appear as nonsegregating if we just
+        # ignore it.
+        # as a crude hack, just restrict to the interval containing all the sites. this will throw away
+        # a few hundred flanking bps on either side, but in such a large dataset, the effect is minimal.
+        pos = new_ts.tables.sites.position
+        new_ts = new_ts.keep_intervals([[pos.min(), pos.max()]]).trim()
+        tszip.compress(new_ts, output.tsz)
+        dump_file(node_map, output.node_map)

@@ -1,0 +1,35 @@
+import shutil
+import os
+
+os.environ["PSMC_PATH"] = os.path.join(config['basedir'], "lib", "psmc", "psmc")
+
+rule bcf_to_psmcfa:
+    input:
+        "{analysis}/chr{chrom}.bcf"
+    output:
+        temporary(r"{analysis}/chr{chrom}.sample{i,\d+}.psmcfa.gz")
+    script:
+        "../scripts/psmcfa.py"
+
+rule combine_psmcfa:
+    input: 
+        "{analysis}/n{n,\d+}/psmc/samples.txt"
+    output: 
+        r"{analysis}/n{n,\d+}/psmc/combined.psmcfa.gz"
+    run:
+        with open(output[0], "wb") as f:
+            for fn in input:
+                with open(fn, "rb") as fin:
+                    shutil.copyfileobj(fin, f)
+
+rule psmc_estimate:
+    input:
+        r"{analysis}/psmc/combined.psmcfa.gz"
+    output:
+        "{analysis}/psmc/estimates.pkl"
+    params:
+        args=["-p", "64*1"]
+    resources:
+        runtime=1440,
+    script:
+        "../scripts/psmc.py"

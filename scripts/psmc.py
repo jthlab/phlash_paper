@@ -1,4 +1,5 @@
 """Interface to command-line PSMC that takes tree sequence input."""
+import pickle
 import itertools
 import logging
 import os
@@ -146,18 +147,10 @@ class msPSMC:
 
 
 if __name__ == "__main__":
-    import pickle
-    n = int(snakemake.wildcards.num_samples)
-    nodes = [(2 * i, 2 * i + 1) for i in range(n)]
     p = msPSMC(snakemake.input[0])
-    assert snakemake.wildcards.method.startswith("psmc")
-    args = []
-    if snakemake.wildcards.method == "psmc64":
-        args = ["-p", "64*1"]
+    args = snakemake.params.args
     dm = p.estimate(*args)
     # scale up mutation and recombination rates
     dm = dm._replace(theta=dm.theta / 100, rho=dm.rho / 100)
     with open(snakemake.output[0], "wb") as f:
         pickle.dump(dm, f)
-    with open(snakemake.output[1], "wt") as f:
-        f.write(p._log)

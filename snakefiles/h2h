@@ -1,0 +1,140 @@
+from itertools import product
+from functools import cache
+
+import stdpopsim
+
+MODELS = [
+    ("AnaPla", "MallardBlackDuck_2L19", "Mallard"),
+    ("AnoGam", "GabonAg1000G_1A17", "GAS"),
+    ("AraTha", "SouthMiddleAtlas_1D17", "SouthMiddleAtlas"),
+    ("AraTha", "African3Epoch_1H18", "SouthMiddleAtlas"),
+    ("BosTau", "HolsteinFriesian_1M13", "Holstein_Friesian"),
+    ("DroMel", "African3Epoch_1S16", "AFR"),
+    ("DroMel", "OutOfAfrica_2L06", "AFR"),
+    ("HomSap", "Africa_1T12", "AFR"),
+    # ("HomSap", "Africa_1B08", "African_Americans"),
+    ("HomSap", "Zigzag_1S14", "generic"),
+    ("PanTro", "BonoboGhost_4K19", "bonobo"),
+    ("PapAnu", "SinglePopSMCpp_1W22", "PAnubis_SNPRC"),
+    ("PonAbe", "TwoSpecies_2L11", "Bornean"),
+]
+
+METHODS = ["phlash", "psmc", "smcpp", "fitcoal", "hapne"][:2]
+LIMITS = {"psmc": 10, "smcpp": 10}
+SAMPLE_SIZES = [1, 10, 100]
+NUM_REPLICATES = 1
+LENGTH_MULTIPLIER = 0.01
+
+def get_default_mutation_rate(species_name):
+    return stdpopsim.get_species(species_name).genome.mean_mutation_rate
+
+
+def get_genome_length(species_name):
+    species = stdpopsim.get_species(species_name)
+    return sum(species.get_contig(chrom).length for chrom in get_chroms(species_name))
+
+
+def get_truth(species_name, demographic_model, population):
+    species = stdpopsim.get_species(species_name)
+    mu = get_default_mutation_rate(species_name)
+    if demographic_model == "Constant":
+        t = np.array([0.0])
+        Ne = np.array([species.population_size])
+    else:
+        model = species.get_demographic_model(demographic_model)
+        md = model.model.debug()
+        t_min = 10.0
+        t_max = 2 * md.epochs[-1].start_time + 1
+        assert np.isinf(md.epochs[-1].end_time)
+        t = np.r_[0.0, np.geomspace(t_min, t_max, 1000)]
+        if "::" in population:
+            # assume two popualtions, POP1::POP2. (this is very brittle)
+            pop1, pop2 = population.split("::")
+            pop_dict = {pop1: 1, pop2: 1}
+        else:
+            pop_dict = {population: 2}
+        c, _ = md.coalescence_rate_trajectory(t, pop_dict)
+    eta = SizeHistory(t=t, c=c)
+    true_dm = DemographicModel(eta=eta, theta=mu, rho=None)
+    return true_dm
+
+
+rule h2h_config_sim:
+    output:
+        "h2h/model{i}/rep{j}/simulations/params.json",
+    run:
+        i = int(wildcards.i)
+        j = int(wildcards.j)
+        species, model, population = MODELS[i]
+        n = max(SAMPLE_SIZES)
+        pop_dict = {population: n}
+        seed = j
+        params = dict(
+            species=species,
+            model=model,
+            populations=pop_dict,
+            seed=seed,
+            length_multiplier=LENGTH_MULTIPLIER,
+        )
+        dump_file(params, output[0])
+
+
+def input_for_psmc_config_h2h(wc):
+    i = int(wc.i)
+    species, _, _ = MODELS[i]
+    n = int(wc.n)
+    return [
+        "h2h/model{i}/rep{j}/simulations/chr%s.sample%d.psmcfa.gz" % (chrom, j)
+        for chrom in get_chroms(species)
+        for j in range(n)
+    ]
+        
+rule h2h_config_for_psmc:
+    input: input_for_psmc_config_h2h
+    output:
+        "h2h/model{i}/rep{j}/n{n,\d+}/psmc/samples.txt"
+    run:
+        with open(output[0], 'wt') as f:
+            for path in input[0]:
+                print(f, file=f)
+
+def input_for_phlash_config(wc):
+    i = int(wc.i)
+    species, _, _ = MODELS[i]
+    chroms = get_chroms(species)
+    return ["h2h/model{i}/rep{j}/simulations/chr%s.bcf" % chrom for chrom in chroms]
+    
+
+rule h2h_config_for_phlash:
+    input: input_for_phlash_config
+    output:
+        r"h2h/model{i}/rep{j}/n{n,\d+}/phlash/config.pkl",
+    run:
+        test_chrom = input[0]
+        train_chroms = input[1:]
+        n = int(wildcards.n)
+        samples = [f"sample{i}" for i in range(n)]
+        ret = {}
+        ret["test_data"] = (test_chrom, samples)
+        ret["train_data"] = [(chrom, samples) for chrom in train_chroms]
+        i = int(wildcards.i)
+        species, _, _ = MODELS[i]
+        ret["mutation_rate"] = get_default_mutation_rate(species)
+        dump_file(ret, output[0])
+
+
+def input_for_h2h_figures(wildcards):
+    ret = []
+    for i, j, method, n in product(
+        range(len(MODELS)), range(NUM_REPLICATES), METHODS, SAMPLE_SIZES
+    ):
+        if n <= LIMITS.get(method, max(SAMPLE_SIZES)):
+            ret.append(f"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl")
+    return ret
+
+
+rule h2h_figures:
+    input:
+        input_for_h2h_figures,
+    output:
+        "figures/h2h/plot.pdf",

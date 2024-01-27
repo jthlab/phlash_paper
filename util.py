@@ -97,7 +97,7 @@ def scrm_stdpopsim_cmd(species_name, demographic_model, population, chrom, sampl
     if "::" in population:
         populations = population.split("::")
     else:
-        populations = [population]
+        populations = [population] * 2
     for pop in populations:
         i = [d.name for d in g.demes].index(pop)
         samples[i] += sample_size
@@ -108,7 +108,7 @@ def scrm_stdpopsim_cmd(species_name, demographic_model, population, chrom, sampl
             ["-t", theta, "-r", rho, L, "--transpose-segsites", "-SC", "abs", "-p", 14, "-oSFS", "-seed", seed],
         )
     )
-    return f"{2 * sample_size} 1 {cmd} {args}"
+    return f"{samples.sum()} 1 {cmd} {args}"
 
 
 @cache
