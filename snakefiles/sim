@@ -36,11 +36,16 @@ def run_simulation(wc, input, output):
         tszip.compress(data.ts, output[0])
     else:
         bcftools.view('-o', output[0], _in=data)
-        bcftools.index(output[0])
+
+rule index_bcf:
+    input: "{analysis}/{file}.bcf"
+    output: "{analysis}/{file}.bcf.csi"
+    run:   
+        bcftools.index(input)
     
 rule simulate_stdpopsim:
     input: 
-        "{analysis}/simulations/params.json"
+        "{analysis}/simulations/params.pkl"
     output:
         "{analysis}/simulations/chr{chrom}.{ext,(tsz|bcf)}"
     run:
@@ -48,7 +53,7 @@ rule simulate_stdpopsim:
 
 rule truth_size_history_function:
     input: 
-        "{analysis}/simulations/params.json"
+        "{analysis}/simulations/params.pkl"
     output:
         "{analysis}/simulations/truth.pkl"
     run:

@@ -1,29 +1,34 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
 from itertools import product
+from collections import defaultdict
 from functools import cache
 
 import stdpopsim
 
-MODELS = [
-    ("AnaPla", "MallardBlackDuck_2L19", "Mallard"),
-    ("AnoGam", "GabonAg1000G_1A17", "GAS"),
-    ("AraTha", "SouthMiddleAtlas_1D17", "SouthMiddleAtlas"),
-    ("AraTha", "African3Epoch_1H18", "SouthMiddleAtlas"),
-    ("BosTau", "HolsteinFriesian_1M13", "Holstein_Friesian"),
-    ("DroMel", "African3Epoch_1S16", "AFR"),
-    ("DroMel", "OutOfAfrica_2L06", "AFR"),
-    ("HomSap", "Africa_1T12", "AFR"),
-    # ("HomSap", "Africa_1B08", "African_Americans"),
-    ("HomSap", "Zigzag_1S14", "generic"),
-    ("PanTro", "BonoboGhost_4K19", "bonobo"),
-    ("PapAnu", "SinglePopSMCpp_1W22", "PAnubis_SNPRC"),
-    ("PonAbe", "TwoSpecies_2L11", "Bornean"),
-]
-
-METHODS = ["phlash", "psmc", "smcpp", "fitcoal", "hapne"][:2]
-LIMITS = {"psmc": 10, "smcpp": 10}
-SAMPLE_SIZES = [1, 10, 100]
-NUM_REPLICATES = 1
-LENGTH_MULTIPLIER = 0.01
+H2H_PARAMS = {
+    'models': [
+        ("AnaPla", "MallardBlackDuck_2L19", "Mallard"),
+        ("AnoGam", "GabonAg1000G_1A17", "GAS"),
+        ("AraTha", "SouthMiddleAtlas_1D17", "SouthMiddleAtlas"),
+        ("AraTha", "African3Epoch_1H18", "SouthMiddleAtlas"),
+        ("BosTau", "HolsteinFriesian_1M13", "Holstein_Friesian"),
+        ("DroMel", "African3Epoch_1S16", "AFR"),
+        ("DroMel", "OutOfAfrica_2L06", "AFR"),
+        ("HomSap", "Africa_1T12", "AFR"),
+        # ("HomSap", "Africa_1B08", "African_Americans"),
+        ("HomSap", "Zigzag_1S14", "generic"),
+        ("PanTro", "BonoboGhost_4K19", "bonobo"),
+        ("PapAnu", "SinglePopSMCpp_1W22", "PAnubis_SNPRC"),
+        ("PonAbe", "TwoSpecies_2L11", "Bornean"),
+    ],
+    'methods': ["psmc", "smcpp", "phlash", "fitcoal", "hapne"][:2],
+    'limits': {"psmc": 10, "smcpp": 10},
+    'sample_sizes': [1, 10, 100],
+    'num_replicates': 1,
+    'length_multiplier': 0.1
+}
 
 def get_default_mutation_rate(species_name):
     return stdpopsim.get_species(species_name).genome.mean_mutation_rate
@@ -34,6 +39,7 @@ def get_genome_length(species_name):
     return sum(species.get_contig(chrom).length for chrom in get_chroms(species_name))
 
 
+@cache
 def get_truth(species_name, demographic_model, population):
     species = stdpopsim.get_species(species_name)
     mu = get_default_mutation_rate(species_name)
@@ -65,8 +71,8 @@ rule h2h_config_sim:
     run:
         i = int(wildcards.i)
         j = int(wildcards.j)
-        species, model, population = MODELS[i]
-        n = max(SAMPLE_SIZES)
+        species, model, population = H2H_PARAMS['models'][i]
+        n = max(H2H_PARAMS['sample_sizes'])
         pop_dict = {population: n}
         seed = j
         params = dict(
@@ -74,14 +80,16 @@ rule h2h_config_sim:
             model=model,
             populations=pop_dict,
             seed=seed,
-            length_multiplier=LENGTH_MULTIPLIER,
+            length_multiplier=H2H_PARAMS['length_multiplier'],
         )
         dump_file(params, output[0])
 
 
-def input_for_psmc_config_h2h(wc):
+## PSMC
+
+def input_for_h2h_config_psmc(wc):
     i = int(wc.i)
-    species, _, _ = MODELS[i]
+    species, _, _ = H2H_PARAMS['models'][i]
     n = int(wc.n)
     return [
         "h2h/model{i}/rep{j}/simulations/chr%s.sample%d.psmcfa.gz" % (chrom, j)
@@ -90,51 +98,108 @@ def input_for_psmc_config_h2h(wc):
     ]
         
 rule h2h_config_for_psmc:
-    input: input_for_psmc_config_h2h
+    input: input_for_h2h_config_psmc
     output:
-        "h2h/model{i}/rep{j}/n{n,\d+}/psmc/samples.txt"
+        "h2h/model{i}/rep{j}/n{n,\d+}/psmc/params.pkl"
     run:
-        with open(output[0], 'wt') as f:
-            for path in input[0]:
-                print(f, file=f)
+        i = int(wildcards.i)
+        species, _, _ = H2H_PARAMS['models'][i]
+        ret = {}
+        ret["mutation_rate"] = get_default_mutation_rate(species)
+        ret['input_files'] = input
+        dump_file(ret, output[0])
+
+## SMCPP
+
+def input_for_h2h_config_smcpp(wc):
+    i = int(wc.i)
+    species, _, _ = H2H_PARAMS['models'][i]
+    n = int(wc.n)
+    return [
+        r"h2h/model{i}/rep{j}/n{n,\d+}/smcpp/chr%s.smc.gz" % chrom
+        for chrom in get_chroms(species)
+    ]
+        
+rule h2h_config_for_smcpp:
+    input: input_for_h2h_config_smcpp
+    output:
+        "h2h/model{i}/rep{j}/n{n,\d+}/smcpp/params.pkl"
+    run:
+        i = int(wildcards.i)
+        species, _, _ = H2H_PARAMS['models'][i]
+        ret = {}
+        ret["mutation_rate"] = get_default_mutation_rate(species)
+        ret["input_files"] = input
+        dump_file(ret, output[0])
+
+## PHLASH
 
 def input_for_phlash_config(wc):
     i = int(wc.i)
-    species, _, _ = MODELS[i]
+    species, _, _ = H2H_PARAMS['models'][i]
     chroms = get_chroms(species)
-    return ["h2h/model{i}/rep{j}/simulations/chr%s.bcf" % chrom for chrom in chroms]
-    
+    ret = {'bcf': ["h2h/model{i}/rep{j}/simulations/chr%s.bcf" % chrom for chrom in chroms]}
+    ret['csi'] = [f+".csi" for f in ret['bcf']]
+    return ret
 
 rule h2h_config_for_phlash:
-    input: input_for_phlash_config
+    input: unpack(input_for_phlash_config)
     output:
         r"h2h/model{i}/rep{j}/n{n,\d+}/phlash/config.pkl",
     run:
-        test_chrom = input[0]
-        train_chroms = input[1:]
+        test_chrom = input.bcf[0]
+        train_chroms = input.bcf[1:]
         n = int(wildcards.n)
         samples = [f"sample{i}" for i in range(n)]
+
         ret = {}
         ret["test_data"] = (test_chrom, samples)
         ret["train_data"] = [(chrom, samples) for chrom in train_chroms]
         i = int(wildcards.i)
-        species, _, _ = MODELS[i]
+        species, _, _ = H2H_PARAMS['models'][i]
         ret["mutation_rate"] = get_default_mutation_rate(species)
         dump_file(ret, output[0])
 
 
-def input_for_h2h_figures(wildcards):
-    ret = []
-    for i, j, method, n in product(
-        range(len(MODELS)), range(NUM_REPLICATES), METHODS, SAMPLE_SIZES
-    ):
-        if n <= LIMITS.get(method, max(SAMPLE_SIZES)):
-            ret.append(f"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl")
+def input_for_h2h_figure(wc):
+    i = int(wc.i)
+    n = int(wc.n)
+    ret = {}
+    for method in H2H_PARAMS['methods']:
+        if n <= H2H_PARAMS['limits'].get(method, max(H2H_PARAMS['sample_sizes'])):
+            ret[method] = [f"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl" for j in range(H2H_PARAMS['num_replicates'])]
     return ret
 
-
-rule h2h_figures:
+rule h2h_figure:
     input:
-        input_for_h2h_figures,
+        unpack(input_for_h2h_figure)
     output:
-        "figures/h2h/plot.pdf",
+        r"figures/h2h/model{i}.n{n,\d+}.pdf"
+    run:
+        T = np.geomspace(1e1, 1e5, 1000)
+        i = int(wildcards.i)
+        model = H2H_PARAMS['models'][i]
+        fig, ax = plt.subplots()
+        truth = get_truth(*model)
+        ax.plot(T, truth.eta(T, Ne=True), color="black")
+        for method, paths in input.items():
+            Nes = []
+            for path in paths:
+                dm = load_file(path)
+                if method == "phlash":
+                    # list of posterior samples from dm, take posterior median as point estimate
+                    Ne = np.median([d.rescale(truth.theta).eta(T, Ne=True) for d in dm], axis=0)
+                else:
+                    Ne = dm.rescale(truth.theta).eta(T, Ne=True)
+                Nes.append(Ne)
+            ax.plot(T, np.mean(Nes, 0), label=method)
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.legend()
+        fig.savefig(output[0])
+
+# ALL_OUTPUT.extend([
+#     f'figures/h2h/model{i}.n{n}.pdf' 
+#     for i in range(len(H2H_PARAMS['models'])) 
+#     for n in H2H_PARAMS['sample_sizes']
+# ])

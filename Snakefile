@@ -1,6 +1,7 @@
 import json
 import pickle
 from functools import partial
+import cyvcf2
 
 def load_file(path):
     if path.endswith("json"):
@@ -26,9 +27,13 @@ def dump_file(obj, path):
 
 workdir: "/scratch/eastbay_paper/pipeline"
 
-rule all:
-    input:
-        ["figures/ccr/plot.pdf", "figures/h2h/plot.pdf"][0]
+ALL_OUTPUT = []
 
-for mod in 'unified', 'ccr', 'sim', 'phlash', 'psmc', 'h2h':
+def input_for_all(_):
+    return ALL_OUTPUT
+
+rule all:
+    input: input_for_all
+
+for mod in 'unified', 'ccr', 'sim', 'phlash', 'psmc', 'smcpp', 'h2h', 'bottleneck':
     include: f'snakefiles/{mod}'
