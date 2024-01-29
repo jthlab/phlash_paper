@@ -122,3 +122,5 @@ rule plot_ccr:
         "figures/ccr/plot.pdf",
     script:
         "../notebooks/ccr.py"
+
+ALL_OUTPUT.append("figures/ccr/plot.pdf")

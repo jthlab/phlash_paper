@@ -55,14 +55,28 @@ import numpy as np
 
 T = np.geomspace(1e1, 1e5, 1000)
 
+# +
+# the original gutenkunst demography was fitted using a factor 2x higher 
+# mutation rate. therefore, to make the plots align, I need to use the 
+# mutation rate assumed by that model. this would not affect real data 
+# analysis so long as the simulated and real mutation rates were the same at 
+# inference time.
+import stdpopsim
+model = stdpopsim.get_species("HomSap").get_demographic_model("OutOfAfrica_3G09")
+dms = {}
+for k in ["real", "simulated"]:
+    d = dms[k] = {}
+    for pop, file in input_d[k].items():
+        d[pop] = pickle.load(open(file, "rb"))
+        if k == "real":
+            d[pop] = [dm.rescale(model.mutation_rate) for dm in d[pop]]
+
+# +
 ccrs = {"real": [], "simulated": []}
 
 for k in ccrs:
-    dms = {}
-    for pop, file in input_d[k].items():
-        dms[pop] = pickle.load(open(file, "rb"))
     for _ in range(1000):
-        dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms.items()}
+        dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms[k].items()}
         ccrs[k].append(
             2
             * dms_i[("YRI","CHB")].eta(T, Ne=True)
@@ -74,11 +88,8 @@ for k in ccrs:
 ratios = {"real": [], "simulated": []}
 
 for k in ratios:
-    dms = {}
-    for pop, file in input_d[k].items():
-        dms[pop] = pickle.load(open(file, "rb"))
     for _ in range(1000):
-        dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms.items()}
+        dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms[k].items()}
         Ne1, Ne2 = [dms_i[k].eta(T, Ne=True) for k in ("YRI", "CHB")]
         ratios[k].append(Ne1 / Ne2 + Ne2 / Ne1)
 
