@@ -39,7 +39,7 @@ if __name__ == "__main__":
     chrom = wc.chrom
     sample = "sample" + wc.i
     output = snakemake.output[0]
-    input_ = snakemake.input[0]
+    input_ = snakemake.input.bcf
     # nodes = tuple([int(i) for i in [wc.node1, wc.node2]])
     # ts = tszip.decompress(snakemake.input[0])
     assert output.endswith(".gz")
@@ -47,6 +47,6 @@ if __name__ == "__main__":
     vcf = cyvcf2.VCF(input_, gts012=True, samples=[sample])
     i = vcf.seqnames.index(chrom)
     L = vcf.seqlens[i]
+    vi = vcf_iter(vcf, sample)
     with gzip.open(output, mode="wt") as out:
-        vi = vcf_iter(vcf, sample)
         gen_psmcfa(vi, contig, L, out, w=100)

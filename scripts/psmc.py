@@ -147,10 +147,11 @@ class msPSMC:
 
 
 if __name__ == "__main__":
-    p = msPSMC(snakemake.input[0])
+    p = msPSMC(snakemake.input[1])
     args = snakemake.params.args
     dm = p.estimate(*args)
     # scale up mutation and recombination rates
     dm = dm._replace(theta=dm.theta / 100, rho=dm.rho / 100)
+    dm = dm.rescale(snakemake.params.mutation_rate)
     with open(snakemake.output[0], "wb") as f:
         pickle.dump(dm, f)

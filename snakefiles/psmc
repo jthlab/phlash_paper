@@ -5,30 +5,33 @@ os.environ["PSMC_PATH"] = os.path.join(config['basedir'], "lib", "psmc", "psmc")
 
 rule bcf_to_psmcfa:
     input:
-        "{analysis}/chr{chrom}.bcf"
+        bcf="{analysis}/chr{chrom}.bcf",
+        csi="{analysis}/chr{chrom}.bcf.csi"
     output:
-        temporary(r"{analysis}/chr{chrom}.sample{i,\d+}.psmcfa.gz")
+        r"{analysis}/chr{chrom}.sample{i,\d+}.psmcfa.gz"
     script:
         "../scripts/psmcfa.py"
 
 rule combine_psmcfa:
     input: 
-        "{analysis}/n{n,\d+}/psmc/samples.txt"
+        "{analysis}/psmc/params.pkl"
     output: 
-        r"{analysis}/n{n,\d+}/psmc/combined.psmcfa.gz"
+        temporary("{analysis}/psmc/combined.psmcfa.gz")
     run:
+        params = load_file(input[0])
         with open(output[0], "wb") as f:
-            for fn in input:
+            for fn in params['input_files']:
                 with open(fn, "rb") as fin:
                     shutil.copyfileobj(fin, f)
 
 rule psmc_estimate:
     input:
-        r"{analysis}/psmc/combined.psmcfa.gz"
+        ["{analysis}/psmc/params.pkl", r"{analysis}/psmc/combined.psmcfa.gz"]
     output:
-        "{analysis}/psmc/estimates.pkl"
+        ["{analysis}/psmc/estimates.pkl"]
     params:
-        args=["-p", "64*1"]
+        args=["-p", "64*1"],
+        mutation_rate=lambda wc, input: load_file(input[0])['mutation_rate']
     resources:
         runtime=1440,
     script:
