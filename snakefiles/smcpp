@@ -1,0 +1,68 @@
+import pandas as pd
+import os.path
+import subprocess
+import shutil
+import sys
+import re
+import glob
+
+from eastbay.size_history import SizeHistory, DemographicModel
+
+rule smcpp_vcf2smc:
+    input:
+        "{analysis}/simulations/chr{chrom}.bcf"
+    output:
+        r"{analysis}/n{n,\d+}/smcpp/chr{chrom}.smc.gz"
+    run:
+        n = int(wildcards.n)
+        sample_ids = ",".join([f"sample{i}" for i in range(n)])
+        pop_str = "pop1:" + sample_ids
+        shell(f"TQDM_DISABLE=1 smc++ vcf2smc {input[0]} {output[0]} {wildcards.chrom} {pop_str}")
+
+rule smcpp_estimate:
+    input:
+        r"{analysis}/smcpp/params.pkl"
+    output:
+        r"{analysis}/smcpp/model.final.json"
+    threads: 8
+    resources:
+        mem_mb=32000,
+        runtime=1440,
+    run:
+        params = load_file(input[0])
+        outdir = os.path.dirname(output[0])
+        mutation_rate = params['mutation_rate']
+        input_files = " ".join(params['input_files'])
+        cmd = f"smc++ estimate --cores 8 --spline cubic --knots 24 -o {outdir} {mutation_rate} {input_files}"
+        res = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res.returncode != 0:
+            # smcpp had a math error. take the last available completed iteration.
+            print(res.stderr.decode(), file=sys.stderr)
+            completed_iters = glob.glob(".model.iter*.json", root_dir=outdir)
+            last_iter = max(completed_iters, key=lambda fn: int(re.match(r"\.model\.iter(\d+)\.json", fn)[1]))
+            print(f"Last completed iter: {last_iter}")
+            src = os.path.join(outdir, last_iter)
+            dst = os.path.join(outdir, "model.final.json")
+            shutil.copyfile(src, dst)
+
+rule smcpp_to_csv:
+    input:
+        "{analysis}/smcpp/model.final.json"
+    output:
+        multiext("{analysis}/smcpp/plot", ".png", ".csv")
+    shell:
+        "smc++ plot -c {output[0]} {input}"
+
+rule smcpp_to_dm:
+    input:
+        csv="{analysis}/smcpp/plot.csv",
+        params="{analysis}/smcpp/params.pkl"
+    output:
+        "{analysis}/smcpp/estimates.pkl"
+    run:
+        df = pd.read_csv(input.csv)
+        eta = SizeHistory(t=df["x"].to_numpy(), c=1 / 2 / df["y"].to_numpy())
+        mu = load_file(input.params)['mutation_rate']
+        dm = DemographicModel(theta=mu, rho=None, eta=eta)
+        with open(output[0], "wb") as f:
+            pickle.dump(dm, f)
