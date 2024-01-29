@@ -1,0 +1,10 @@
+rule plot_independence:
+    # piggyback of all the other simulations we already ran
+    input:
+        expand("h2h/model{i}/rep0/simulations/chr1.bcf", i=range(len(H2H_PARAMS['models'])))
+    output:
+        'figures/independence/plot.pdf'
+    script:
+        '../notebooks/independence.py'
+
+ALL_OUTPUT.extend(rules.plot_independence.output)
