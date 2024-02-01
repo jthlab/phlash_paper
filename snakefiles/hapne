@@ -1,0 +1,42 @@
+import stdpopsim
+
+if "map" not in data:
+            assert "rate" in data
+            if data["rate"][-1] != 0:
+                raise ValueError("The last entry in the 'rate' column must be zero")
+            pos_Mb = data["pos"] / 1e6
+            map_pos = np.cumsum(data["rate"][:-1] * np.diff(pos_Mb))
+            data["map"] = np.insert(map_pos, 0, 0) / 100
+        else:
+            data["map"] /= 100  # Convert centiMorgans to Morgans
+        if len(data["map"]) == 0:
+            raise ValueError("Empty hapmap file")
+
+def stdpopsim_to_shapeit(contig: stdpopsim.Contig):
+    'convert stdpopsim recombination map to shapeit format'
+    rm = contig.recombination_map
+    # Convert from cM/Mb to cM/bp
+    # rate maps seem to have to end in zero
+    rates_cm_mb = np.append(rm.rate * 1e6 * 100, 0.0)
+    pos = np.append(rm.position, rm.sequence_length)
+    cum = np.cumsum(np.diff(pos) / 1e6 * rates_cm_mb)
+    return np.stack([pos[1:], rates_cm_mb, cum], 1)
+
+rule hapne_recomb_map:
+    input:
+        "{analysis}/hapne/params.pkl"
+    output:
+        "{analysis}/hapne/recomb_map_chr{chrom}.txt"
+    run:
+        params = load_file(input[0])
+        species = stdpopsim.get_species(params['species'])
+        contig = stdpopsim.get_species(species).get_contig(wildcards.chrom)
+        recomb_map = stdpopsim_to_shapeit(contig)
+        with open(output[0], 'wt') as f:
+            print("position COMBINED_rate(cM/Mb) Genetic_Map(cM)", file=f)
+            for row in recomb_map:
+                print(" ".join(map(float, row)), file=f)
+
+rule run_hapne:
+    input:
+        "{analysis}/hapne/params.pkl"

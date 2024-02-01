@@ -1,5 +1,6 @@
 resources:
   - gpus=1
+  - downsample=4  # limit concurrent downsample jobs, they take up a ton of memory.
 cores: "all"
 config:
   - unified_path="/scratch/unified"

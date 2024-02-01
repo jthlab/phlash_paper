@@ -1,0 +1,116 @@
+# check the composite likelihood approximations by refitting with
+# "split" afs/2-sample
+import numpy as np
+import tszip
+import os
+from collections import Counter
+import eastbay as eb
+import eastbay.plot
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from eastbay.data import RawContig, TreeSequenceContig
+
+def gappy_afs(ts, spacing, window_size):
+    assert spacing > window_size  # >>, in fact
+    L = int(ts.sequence_length)
+    regions = np.arange(0, L, spacing)
+    windows = np.stack([regions, regions + window_size], axis=1).reshape(-1)
+    windows = np.append(windows, L)
+    afss = ts.allele_frequency_spectrum(windows=windows, span_normalise=False, polarised=True)
+    # regions = [0, window_size, spacing, spacing + window_size, ...]
+    # so the even-numbered regions contain the regions; everything else is the complement
+    # the last region is [k * spacing + window_size, L] which must also be dropped
+    region_afss = afss[:-1:2]  
+    return np.sum(region_afss, axis=0)[1:-1].astype(int)
+
+rule composite_config_for_unified:
+    input:
+        'unified/merged_metadata.pkl'
+    output:
+        dynamic('composite/pop{i}/unified/params.pkl')
+    run:
+        metadata = load_file(input[0])
+        pop_sizes = Counter()
+        for i, pop in enumerate(metadata['populations']):
+            pop_sizes[pop] = len(unified_nodes_for_popid(i, metadata))
+        top10 = pop_sizes.most_common(10)
+        for pop in top10:
+            i = list(metadata['populations']).index(pop)
+            nodes = unified_nodes_for_popid(i, metadata)
+            dump_file({'nodes': {i: nodes}}, output[0].format(i=i))
+
+rule composite_gafs:
+    input:
+        'composite/pop{i}/unified/chr{chrom}.tsz'
+    output:
+        'composite/pop{i}/unified/chr{chrom}.gafs.txt'
+    run:
+        ts = tszip.decompress(input[0])
+        gafs = gappy_afs(ts, 25_000, 100)
+        with open(output[0], 'wt') as f:
+            f.write(" ".join(map(str, gafs)))
+
+
+def input_for_composite_phlash_estimate(wc):
+    i = int(wc.i)
+    template = dynamic(f'composite/pop{i}/unified/chr')
+    # use chr1-8 for sequence and, rest for afs
+    ret = dict(tsz=[], afs=[])
+    citer = unified_chroms()
+    ret['test'] = next(citer)
+    for chrom in citer:
+        cnum = int(chrom[:-2])
+        t = template + chrom + ".tsz"
+        if cnum <= 8:
+            ret['tsz'].append(t)
+        else:
+            ret['afs'].append(t)
+    return ret
+
+rule composite_phlash_estimate:
+    input:
+        unpack(input_for_composite_phlash_estimate)
+    output:
+        # do not prepend phlash/ to avoid rule conflict
+        dynamic("composite/pop{i}/estimates.pkl")
+    resources:
+        gpus=1,
+        slurm_partition="spgpu",
+        slurm_extra="--gpus 1",
+    run:
+        contigs = []
+        test_contig = eb.contig(input.test)
+        for tsz in input.tsz:
+            tsc = eb.contig(tsz, samples=[(0, 1)])
+            data = tsc.get_data(100)
+            contigs.append(RawContig(het_matrix=data['het_matrix'], afs=None, window_size=100))
+        for tsz in input.afs:
+            ts = tszip.decompress(tsz)
+            afs = gappy_afs(ts, 10_000, 100)
+            contigs.append(RawContig(het_matrix=None, afs=afs, window_size=100))
+        res = eb.fit(contigs, test_data=test_contig, mutation_rate=config['human_mutation_rate'])
+        dump_file(res, output[0])
+
+rule plot_composite_i:
+    input:
+        cl=dynamic("unified/pop{i}/phlash/estimates.pkl"),
+        indep=dynamic("composite/pop{i}/estimates.pkl")
+    output:
+        dynamic("figures/composite/plot.pop{i}.pdf")
+    run:
+        os.environ['CUDA_VISIBLE_GPUS'] = ""
+        dms = {k: load_file(v) for k, v in input.items()}
+        fig, ax = plt.subplots()
+        eastbay.plot.plot_posterior(dms['indep'], ax, label="True lik.", t1=1e2, tM=1e5)
+        eastbay.plot.plot_posterior(dms['cl'], ax, label="Composite lik.", t1=1e2, tM=1e5)
+        ax.set_xlabel("Generations")
+        ax.set_ylabel("$N_e$")
+        fig.tight_layout()
+        fig.savefig(output[0])
+        
+
+rule plot_composite:
+    input:
+        dynamic("figures/composite/plot.pop{i}.pdf")
+
+# ALL_OUTPUT.extend(rules.plot_composite.input)

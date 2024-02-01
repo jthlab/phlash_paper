@@ -1,0 +1,103 @@
+import stdpopsim
+import demes
+import msprime
+from itertools import product
+import tszip
+
+BOTTLENECK_CONFIG = {
+    "sample_sizes": [10, 50, 100],
+    "num_replicates": 10,
+}
+
+def base_model(t, duration, epsilon) -> stdpopsim.DemographicModel:
+    builder = demes.Builder()
+    N0 = 1e4
+    epochs = [
+        # ancestral size
+        dict(start_size=10 * N0, end_time=t + duration),
+        dict(start_size=N0, end_size=N0, end_time=100),
+        dict(start_size=N0, end_size=1e6, end_time=0)
+    ]
+    builder.add_deme(name="pop0", epochs=epochs)
+    demography = builder.resolve()
+    msp_demo = msprime.Demography.from_demes(demography)
+    return stdpopsim.DemographicModel(
+        id="base_model", description="base model", long_description="model", model=msp_demo
+    )
+
+
+def bneck_model(t, duration, epsilon) -> stdpopsim.DemographicModel:
+    builder = demes.Builder()
+    N0 = 1e4
+    epochs = [
+        # ancestral size
+        dict(start_size=10 * N0, end_time=t + duration),
+        dict(start_size=epsilon * N0, end_size=epsilon * N0, end_time=t),
+    ]
+    assert t >= 100
+    if t > 100:
+        epochs.append(dict(start_size=N0, end_size=N0, end_time=100))
+    epochs.append(dict(start_size=N0, end_size=1e6, end_time=0))
+    builder.add_deme(name="pop0", epochs=epochs)
+    demography = builder.resolve()
+    msp_demo = msprime.Demography.from_demes(demography)
+    return stdpopsim.DemographicModel(
+        id="bneck_model", description="bneck_model", long_description="model", model=msp_demo
+    )
+
+
+rule bneck_sim_config:
+    output:
+        r"bneck/rep{i,\d+}/{model,(base|bneck)}/simulations/params.pkl",
+    localrule: True
+    run:
+        i = int(wildcards.i)
+        params = {}
+        n = max(BOTTLENECK_CONFIG["sample_sizes"])
+        if wildcards.model == "bneck":
+            f = bneck_model
+        else:
+            f = base_model
+        params["model"] = f(813e3 / 29, 117e3 / 29, 0.1)
+        params["species"] = "HomSap"
+        params["populations"] = {"pop0": n}
+        params["seed"] = i
+        dump_file(params, output[0])
+
+
+rule bneck_phlash_config:
+    input:
+        bcf=expand(
+            r"bneck/{{params}}/simulations/chr{chrom}.bcf", chrom=range(1, 23)
+        ),
+        csi=expand(
+            r"bneck/{{params}}/simulations/chr{chrom}.bcf.csi", chrom=range(1, 23)
+        ),
+    output:
+        r"bneck/{params}/n{n,\d+}/phlash/config.pkl",
+    localrule: True
+    run:
+        n = int(wildcards.n)
+        samples = [f"sample{i}" for i in range(n)]
+        ret = {}
+        ret["test_data"] = (input.bcf[0], samples)
+        ret["train_data"] = [(path, samples) for path in input.bcf[1:]]
+        ret["mutation_rate"] = stdpopsim.get_species("HomSap").genome.mean_mutation_rate
+        dump_file(ret, output[0])
+
+
+rule plot_bneck:
+    input:
+        expand(
+            r"bneck/rep{i}/{model}/n{n}/phlash/estimates.pkl",
+            n=BOTTLENECK_CONFIG["sample_sizes"],
+            i=range(BOTTLENECK_CONFIG["num_replicates"]),
+            model=['base', 'bneck']
+        ),
+    output:
+        "figures/bneck/plot.pdf",
+    run:
+        pass
+
+
+ALL_OUTPUT.extend(rules.plot_bneck.output)

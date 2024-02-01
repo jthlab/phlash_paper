@@ -23,7 +23,7 @@ H2H_PARAMS = {
         ("PapAnu", "SinglePopSMCpp_1W22", "PAnubis_SNPRC"),
         ("PonAbe", "TwoSpecies_2L11", "Bornean"),
     ],
-    'methods': ["psmc", "smcpp", "phlash", "fitcoal", "hapne"][:2],
+    'methods': ["psmc", "smcpp", "phlash", "fitcoal", "hapne"][:3],
     'limits': {"psmc": 10, "smcpp": 10},
     'sample_sizes': [1, 10, 100],
     'num_replicates': 1,
@@ -151,7 +151,6 @@ rule h2h_config_for_phlash:
         train_chroms = input.bcf[1:]
         n = int(wildcards.n)
         samples = [f"sample{i}" for i in range(n)]
-
         ret = {}
         ret["test_data"] = (test_chrom, samples)
         ret["train_data"] = [(chrom, samples) for chrom in train_chroms]

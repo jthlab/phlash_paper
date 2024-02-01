@@ -1,0 +1,66 @@
+import tszip
+import numpy as np
+
+from eastbay.data import RawContig
+
+ADNA_CONFIG = {
+'ancient_samples': np.array(
+    [
+        [7508, 7509],
+        [7510, 7511],
+        [7512, 7513],
+        [7514, 7515],
+        [7516, 7517],
+        [7518, 7519],
+        [7520, 7521],
+        [7522, 7523],
+    ],
+    dtype=int,
+)
+}
+
+def filtered_het_matrix(chrom_path, window_size):
+    """create a het matrix for each sample pair in ancient samples, filtering out
+    any a<->g or c<->t that are above an MAF cutoff in modern samples"""
+    chrom = tszip.decompress(chrom_path)
+    ancient_samples = ADNA_CONFIG['ancient_samples']
+    ancient_nodes = list(map(list, ancient_samples))
+    L = chrom.sequence_length
+    w = window_size
+    ret = np.zeros([len(ancient_samples), int(L // w + 1)], dtype=np.int8)
+    A = np.array(tskit.ALLELES_ACGT)
+    I = np.arange(2 * chrom.num_individuals)
+    modern_mask = np.all(I[:, None, None] != ancient_samples[None], (1, 2))
+    DEAM = {frozenset({"C", "T"}), frozenset({"A", "G"})}
+    for v in chrom.variants(alleles=tskit.ALLELES_ACGT):
+        if len(np.unique(v.genotypes)) > 2:
+            # restrict to biallelic for simplicity
+            continue
+        a = v.site.ancestral_state
+        adna_gt = A[v.genotypes[~modern_mask]]
+        if np.all(adna_gt == a):
+            continue
+        b = adna_gt[adna_gt != a].reshape(-1)[0]
+        key = frozenset({a, b})
+        deam = key in DEAM
+        modern_maf = (A[v.genotypes[modern_mask]] != a).sum()
+        if DEAM and modern_maf <= 5:
+            continue
+        ell = int(v.position / w)
+        g = v.genotypes[ancient_samples]
+        ret[:, ell] += g[:, 0] != g[:, 1]
+    afs = ts.allele_frequency_spectrum(
+        sample_sets=[],
+        span_normalise=False,
+        polarized=True
+    )
+
+    return (chrom_path, ret)
+
+rule adna_unified_filtered:
+    output:
+        "adna/chr{chrom}.filtered.pkl"
+    run:
+        chrom_path = get_unified_chrom_path(chrom)
+        _, het_matrix = filtered_het_matrix(chrom_path, 100)
+        rc = RawContig(het_matrix=het_matrix, afs=np.ones(1), window_size=100)

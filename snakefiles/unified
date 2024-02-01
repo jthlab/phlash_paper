@@ -8,62 +8,128 @@ import os.path
 import glob
 import re
 
-def path_for_chrom(chrom):
+
+def path_for_unified_chrom(chrom):
     return os.path.join(
-        config['unified_path'], 
-        f'hgdp_tgp_sgdp_high_cov_ancients_chr{chrom}.dated.trees.tsz'
+        config["unified_path"],
+        f"hgdp_tgp_sgdp_high_cov_ancients_chr{chrom}.dated.trees.tsz",
     )
+
 
 def unified_chroms():
     "all chrosomal arms present in the unified dataset"
     template = "hgdp_tgp_sgdp_high_cov_ancients_chr{}.dated.trees.tsz"
     # FIXME: sh < 2.0.6 monkey-patches glob.glob, disrespecting root_dir and other args.
     # https://github.com/amoffat/sh/issues/708
-    files = glob.glob(template.format("*"), root_dir=config['unified_path'])
+    files = glob.glob(template.format("*"), root_dir=config["unified_path"])
     pattern = template.format(r"(\d+_[pq])")
     for f in files:
         m = re.match(pattern, f)
         assert m
         yield m[1]
 
+
+def unified_nodes_for_pop(pop, metadata):
+    i = list(metadata["populations"]).index(pop)
+    (inds,) = np.where(metadata["individual_populations"] == i)
+    return [tuple(metadata["individuals"][i].nodes) for i in inds]
+
+
 rule metadata:
-    output: 
-        'unified/metadata.pkl'
+    output:
+        "unified/metadata.pkl",
     run:
-        chr21 = tszip.decompress(path_for_chrom('21_q'))
+        chr21 = tszip.decompress(path_for_unified_chrom("21_q"))
         metadata = {
-            'populations': list(chr21.populations()),
-            'individual_populations': chr21.individual_populations,
-            'individuals': list(chr21.individuals())
+            "populations": list(chr21.populations()),
+            "individual_populations": chr21.individual_populations,
+            "individuals": list(chr21.individuals()),
         }
-        for pop in metadata['populations']:
+        for pop in metadata["populations"]:
             pop.metadata = json.loads(pop.metadata)
         dump_file(metadata, output[0])
 
+
+checkpoint merged_metadata:
+    input:
+        "unified/metadata.pkl",
+    output:
+        "unified/merged_metadata.pkl",
+    run:
+        # merge same pop names
+        metadata = load_file(input[0])
+        merged_pops = {}
+        for pop in metadata["populations"]:
+            name = pop.metadata.get("description", pop.metadata["name"]).split(" ")[0]
+            if name == "Colombians":
+                name = "Colombian"
+            merged_pops.setdefault(name, [])
+            merged_pops[name].append(pop)
+        merged_metadata = {}
+        merged_metadata["populations"] = merged_pops
+        merged_i_p = np.copy(metadata["individual_populations"])
+        for i, pop in enumerate(merged_pops):
+            for pop1 in merged_pops[pop]:
+                merged_i_p[merged_i_p == pop1.id] = i
+        merged_metadata["individual_populations"] = merged_i_p
+        merged_metadata["individuals"] = metadata["individuals"]
+        dump_file(merged_metadata, output[0])
+
+
+def subsample_unified(chrom_path, nodes):
+    ts = tszip.decompress(chrom_path)
+    nodes_flat = np.reshape(nodes, -1)
+    assert nodes_flat.size
+    assert len(set(nodes_flat)) == len(nodes_flat)
+    new_ts, node_map = ts.simplify(samples=nodes_flat, map_nodes=True)
+    # the chromosomes are organized into different arms, however the tree sequence spans the entire
+    # chromosome. so there is a big "missing" chunk which will appear as nonsegregating if we just
+    # ignore it.
+    # as a crude hack, just restrict to the interval containing all the sites. this will throw away
+    # a few hundred flanking bps on either side, but in such a large dataset, the effect is minimal.
+    pos = new_ts.tables.sites.position
+    new_ts = new_ts.keep_intervals([[pos.min(), pos.max()]]).trim()
+    return new_ts, node_map
+
+
 rule unified_subsample:
-    input: 
-        "{analysis}/unified/params.pkl"
-    output: 
-        tsz="{analysis}/unified/chr{chrom}.tsz",
-        node_map="{analysis}/unified/chr{chrom}.node_map.pkl"
-    run: 
-        nodes = load_file(input[0])['nodes']
-        chrom_path = path_for_chrom(wildcards.chrom)
-        ts = tszip.decompress(chrom_path)
-        nodes_flat = [x 
-            for pop in nodes 
-            for row in nodes[pop] 
-            for x in row
-        ]
-        assert nodes_flat
-        assert len(set(nodes_flat)) == len(nodes_flat)
-        new_ts, node_map = ts.simplify(samples=nodes_flat, map_nodes=True)
-        # the chromosomes are organized into different arms, however the tree sequence spans the entire
-        # chromosome. so there is a big "missing" chunk which will appear as nonsegregating if we just
-        # ignore it.
-        # as a crude hack, just restrict to the interval containing all the sites. this will throw away
-        # a few hundred flanking bps on either side, but in such a large dataset, the effect is minimal.
-        pos = new_ts.tables.sites.position
-        new_ts = new_ts.keep_intervals([[pos.min(), pos.max()]]).trim()
-        tszip.compress(new_ts, output.tsz)
-        dump_file(node_map, output.node_map)
+    output:
+        multiext("unified/{population}/chr{chrom}", ".tsz", ".node_map.pkl"),
+    resources:
+        downsample=1
+    run:
+        metadata = load_file(checkpoints.merged_metadata.get().output[0])
+        nodes = unified_nodes_for_pop(wildcards.population, metadata)
+        chrom_path = path_for_unified_chrom(wildcards.chrom)
+        new_ts, node_map = subsample_unified(chrom_path, nodes)
+        tszip.compress(new_ts, output[0])
+        dump_file(node_map, output[1])
+
+
+rule config_for_phlash:
+    input:
+        expand("unified/{{population}}/chr{chrom}.tsz", chrom=unified_chroms()),
+    output:
+        "unified/{population}/phlash/config.pkl",
+    run:
+        params = {}
+        params["test_data"] = (input[0], None)
+        params["train_data"] = [(x, None) for x in input[1:]]
+        dump_file(params, output[0])
+
+
+def input_for_unified_all(wc):
+    metadata = load_file(checkpoints.merged_metadata.get().output[0])
+    return expand(
+        "unified/{population}/phlash/estimates.pkl", population=metadata["populations"]
+    )
+
+
+rule unified_all:
+    input:
+        input_for_unified_all,
+    output:
+        "figures/unified/plot.pdf",
+
+
+ALL_OUTPUT.extend(rules.unified_all.output)

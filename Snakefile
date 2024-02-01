@@ -2,6 +2,11 @@ import json
 import pickle
 from functools import partial
 import cyvcf2
+import os
+
+config['human_mutation_rate'] = 1.29e-8
+os.environ['SCRM_PATH'] = config['scrm_path']
+
 
 def load_file(path):
     if path.endswith("json"):
@@ -25,7 +30,7 @@ def dump_file(obj, path):
     with open(path, f'w{mode}') as f:
         encoder.dump(obj, f)
 
-workdir: "/scratch/eastbay_paper/pipeline"
+workdir: config['workdir']
 
 ALL_OUTPUT = []
 
@@ -35,5 +40,5 @@ def input_for_all(_):
 rule all:
     input: input_for_all
 
-for mod in 'unified', 'ccr', 'sim', 'phlash', 'psmc', 'smcpp', 'h2h', 'bottleneck':
+for mod in 'unified', 'ccr', 'sim', 'phlash', 'psmc', 'smcpp', 'h2h', 'bottleneck', 'composite':
     include: f'snakefiles/{mod}'

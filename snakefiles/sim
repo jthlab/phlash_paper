@@ -1,11 +1,10 @@
 import numpy as np
 import sh
+import os
 
 import stdpopsim
 
-from eastbay.sim import stdpopsim_dataset, compute_truth
-
-bcftools = sh.Command('bcftools')
+bcftools = sh.Command(config['bcftools_path'])
 
 def get_chroms(species_name):
     species = stdpopsim.get_species(species_name)
@@ -20,6 +19,10 @@ def get_chroms(species_name):
             yield chrom.id
 
 def run_simulation(wc, input, output):
+    import os
+    os.environ['CUDA_VISIBLE_DEVICES'] = ""
+    # prevent jax from using gpu just for sims
+    from eastbay.sim import stdpopsim_dataset, compute_truth
     params = load_file(input[0])
     length_multiplier = params.get('length_multiplier', 1.0)
     bcf = wc.ext == 'bcf'
@@ -29,6 +32,7 @@ def run_simulation(wc, input, output):
         populations=params['populations'],
         contigs=[wc.chrom],
         seed=params['seed'],
+        use_scrm=bcf,
         options=dict(return_vcf=bcf, length_multiplier=length_multiplier)
     )
     data = res['data'][wc.chrom]
