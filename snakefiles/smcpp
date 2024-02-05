@@ -51,6 +51,7 @@ rule smcpp_to_csv:
         "{analysis}/smcpp/model.final.json"
     output:
         multiext("{analysis}/smcpp/plot", ".png", ".csv")
+    localrule: True
     shell:
         "smc++ plot -c {output[0]} {input}"
 
@@ -58,6 +59,7 @@ rule smcpp_to_dm:
     input:
         csv="{analysis}/smcpp/plot.csv",
         params="{analysis}/smcpp/params.pkl"
+    localrule: True
     output:
         "{analysis}/smcpp/estimates.pkl"
     run:

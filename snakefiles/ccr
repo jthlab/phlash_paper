@@ -10,6 +10,7 @@ rule ccr_sim_params:
         "unified/merged_metadata.pkl",
     output:
         "ccr/simulations/params.pkl",
+    localrule: True
     run:
         metadata = load_file(input[0])
         pop_dict = {
@@ -30,7 +31,8 @@ rule ccr_combined_contig:
     output:
         multiext("ccr/unified/chr{chrom}", ".tsz", ".node_map.pkl"),
     resources:
-        downsample=1
+        downsample=1,
+        mem_mb=12000,
     run:
         metadata = load_file(input[0])
         nodes = np.concatenate(
@@ -48,6 +50,7 @@ rule ccr_phlash_unified_config:
         node_maps=expand("ccr/unified/chr{chrom}.node_map.pkl", chrom=unified_chroms()),
     output:
         r"ccr/unified/{population,(combined|Yoruba|Han)}/phlash/config.pkl",
+    localrule: True
     run:
         metadata = load_file(input.metadata)
         nodes_d = {
@@ -76,6 +79,7 @@ rule ccr_phlash_simulated_config:
         expand("ccr/simulations/chr{chrom}.tsz", chrom=range(1, 23)),
     output:
         r"ccr/simulations/{population,(combined|YRI|CHB)}/phlash/config.pkl",
+    localrule: True
     run:
         ts = tszip.decompress(input[-1])
         yri_id, chb_id = [
