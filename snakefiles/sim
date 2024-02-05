@@ -52,6 +52,9 @@ rule simulate_stdpopsim:
         "{analysis}/simulations/params.pkl"
     output:
         "{analysis}/simulations/chr{chrom}.{ext,(tsz|bcf)}"
+    resources:
+        runtime=240,
+        mem_mb=10000,
     run:
         run_simulation(wildcards, input, output)
 

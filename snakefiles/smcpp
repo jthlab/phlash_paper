@@ -10,7 +10,7 @@ from eastbay.size_history import SizeHistory, DemographicModel
 
 rule smcpp_vcf2smc:
     input:
-        "{analysis}/simulations/chr{chrom}.bcf"
+        multiext("{analysis}/simulations/chr{chrom}", ".bcf", ".bcf.csi")
     output:
         r"{analysis}/n{n,\d+}/smcpp/chr{chrom}.smc.gz"
     run:
@@ -33,7 +33,8 @@ rule smcpp_estimate:
         outdir = os.path.dirname(output[0])
         mutation_rate = params['mutation_rate']
         input_files = " ".join(params['input_files'])
-        cmd = f"smc++ estimate --cores 8 --spline cubic --knots 24 -o {outdir} {mutation_rate} {input_files}"
+        # cmd = f"source ~/opt/smcpp/bin/activate && smc++ estimate --cores 8 --spline cubic --knots 16 -o {outdir} {mutation_rate} {input_files}"
+        cmd = f"smc++ estimate --cores 8 --timepoints 1e1 1e5 --knots 16 -o {outdir} {mutation_rate} {input_files}"
         res = subprocess.run(cmd, shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if res.returncode != 0:
             # smcpp had a math error. take the last available completed iteration.

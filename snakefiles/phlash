@@ -25,7 +25,7 @@ rule phlash_estimate:
     input: "{analysis}/phlash/config.pkl"
     output: "{analysis}/phlash/estimates.pkl"
     resources:
-        mem_mb=16000,
+        mem_mb=32000,
         gpus=1,
         runtime=120,
         slurm_partition="spgpu",

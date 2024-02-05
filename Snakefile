@@ -6,6 +6,7 @@ import os
 
 config['human_mutation_rate'] = 1.29e-8
 os.environ['SCRM_PATH'] = config['scrm_path']
+os.environ['PSMC_PATH'] = config['psmc_path']
 
 
 def load_file(path):

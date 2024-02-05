@@ -12,8 +12,9 @@ rerun-incomplete: True
 printshellcmds: True
 jobscript: "/home/jonth/eastbay_paper/slurm-jobscript.sh"
 config:
-  - unified_path="/scratch/unified"
+  - unified_path="/nfs/turbo/lsa-jonth/jonth/unified/"
   - basedir="/home/jonth/eb_dl/paper_repo"
   - workdir="/scratch/jonth_root/jonth0/jonth/eastbay_paper/pipeline"
   - bcftools_path="~/.local/bin/bcftools"
   - scrm_path="~/eb_dl/paper_repo/lib/scrm/scrm"
+  - psmc_path="~/eb_dl/paper_repo/lib/psmc/psmc"

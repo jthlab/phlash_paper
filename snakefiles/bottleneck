@@ -88,12 +88,13 @@ rule bneck_phlash_config:
 
 rule plot_bneck:
     input:
-        expand(
+        simulated=expand(
             r"bneck/rep{i}/{model}/n{n}/phlash/estimates.pkl",
             n=BOTTLENECK_CONFIG["sample_sizes"],
             i=range(BOTTLENECK_CONFIG["num_replicates"]),
             model=['base', 'bneck']
         ),
+	yri="unified/Yoruba/phlash/estimates.pkl",
     output:
         "figures/bneck/plot.pdf",
     run:

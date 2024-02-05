@@ -93,12 +93,15 @@ def subsample_unified(chrom_path, nodes):
 
 
 rule unified_subsample:
+    input:
+        'unified/merged_metadata.pkl',
     output:
         multiext("unified/{population}/chr{chrom}", ".tsz", ".node_map.pkl"),
     resources:
-        downsample=1
+        mem_mb=12000,
+        runtime=5,
     run:
-        metadata = load_file(checkpoints.merged_metadata.get().output[0])
+        metadata = load_file(input[0])
         nodes = unified_nodes_for_pop(wildcards.population, metadata)
         chrom_path = path_for_unified_chrom(wildcards.chrom)
         new_ts, node_map = subsample_unified(chrom_path, nodes)
@@ -111,10 +114,12 @@ rule config_for_phlash:
         expand("unified/{{population}}/chr{chrom}.tsz", chrom=unified_chroms()),
     output:
         "unified/{population}/phlash/config.pkl",
+    localrule: True
     run:
         params = {}
         params["test_data"] = (input[0], None)
         params["train_data"] = [(x, None) for x in input[1:]]
+        params["mutation_rate"] = config["human_mutation_rate"]
         dump_file(params, output[0])
 
 

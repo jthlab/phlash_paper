@@ -17,17 +17,16 @@ H2H_PARAMS = {
         ("DroMel", "African3Epoch_1S16", "AFR"),
         ("DroMel", "OutOfAfrica_2L06", "AFR"),
         ("HomSap", "Africa_1T12", "AFR"),
-        # ("HomSap", "Africa_1B08", "African_Americans"),
         ("HomSap", "Zigzag_1S14", "generic"),
         ("PanTro", "BonoboGhost_4K19", "bonobo"),
         ("PapAnu", "SinglePopSMCpp_1W22", "PAnubis_SNPRC"),
         ("PonAbe", "TwoSpecies_2L11", "Bornean"),
     ],
-    'methods': ["psmc", "smcpp", "phlash", "fitcoal", "hapne"][:3],
+    'methods': ["psmc", "smcpp", "phlash", "fitcoal", "hapne"][1:2],
     'limits': {"psmc": 10, "smcpp": 10},
     'sample_sizes': [1, 10, 100],
     'num_replicates': 1,
-    'length_multiplier': 0.1
+    'length_multiplier': 1.0
 }
 
 def get_default_mutation_rate(species_name):
@@ -67,7 +66,8 @@ def get_truth(species_name, demographic_model, population):
 
 rule h2h_config_sim:
     output:
-        "h2h/model{i}/rep{j}/simulations/params.json",
+        "h2h/model{i}/rep{j}/simulations/params.pkl",
+    localrule: True
     run:
         i = int(wildcards.i)
         j = int(wildcards.j)
@@ -99,6 +99,7 @@ def input_for_h2h_config_psmc(wc):
         
 rule h2h_config_for_psmc:
     input: input_for_h2h_config_psmc
+    localrule: True
     output:
         "h2h/model{i}/rep{j}/n{n,\d+}/psmc/params.pkl"
     run:
@@ -124,6 +125,7 @@ rule h2h_config_for_smcpp:
     input: input_for_h2h_config_smcpp
     output:
         "h2h/model{i}/rep{j}/n{n,\d+}/smcpp/params.pkl"
+    localrule: True
     run:
         i = int(wildcards.i)
         species, _, _ = H2H_PARAMS['models'][i]
@@ -146,6 +148,7 @@ rule h2h_config_for_phlash:
     input: unpack(input_for_phlash_config)
     output:
         r"h2h/model{i}/rep{j}/n{n,\d+}/phlash/config.pkl",
+    localrule: True
     run:
         test_chrom = input.bcf[0]
         train_chroms = input.bcf[1:]
@@ -197,8 +200,8 @@ rule h2h_figure:
         ax.legend()
         fig.savefig(output[0])
 
-# ALL_OUTPUT.extend([
-#     f'figures/h2h/model{i}.n{n}.pdf' 
-#     for i in range(len(H2H_PARAMS['models'])) 
-#     for n in H2H_PARAMS['sample_sizes']
-# ])
+ALL_OUTPUT.extend([
+    f'figures/h2h/model{i}.n{n}.pdf' 
+    for i in range(len(H2H_PARAMS['models'])) 
+    for n in H2H_PARAMS['sample_sizes']
+])
