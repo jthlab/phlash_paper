@@ -1,7 +1,7 @@
 import tszip
 import numpy as np
 
-from eastbay.data import RawContig
+from phlash.data import RawContig
 
 ADNA_CONFIG = {
 'ancient_samples': np.array(

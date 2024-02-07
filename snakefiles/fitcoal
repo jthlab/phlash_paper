@@ -1,0 +1,100 @@
+import pathlib
+
+import cyvcf2
+import pandas as pd
+
+
+rule bcf_afs:
+    input:
+        multiext("{analysis}/simulations/chr{chrom}", ".bcf", ".bcf.csi"),
+    output:
+        r"{analysis}/n{n,\d+}/chr{chrom}.afs.txt",
+    run:
+        n = int(wildcards.n)
+        samples = [f"sample{i}" for i in range(n)]
+        v = cyvcf2.VCF(input[0], samples=samples)
+        assert len(v.seqlens) == len(v.seqnames) == 1
+        L = v.seqlens[0]
+        afs = [0] * (2 * n + 1)
+        for row in v:
+            k = row.num_het + 2 * row.num_hom_alt
+            afs[k] += 1
+        with open(output[0], "wt") as out:
+            print(L, file=out)
+            print(" ".join(map(str, afs)), file=out)
+
+
+rule fitcoal_truncate:
+    input:
+        r"{analysis}/fitcoal/afs.txt",
+    output:
+        r"{analysis}/fitcoal/trunc.txt",
+    resources:
+        runtime=1440,
+    shell:
+        "java -cp %s/lib/FitCoal1.1/FitCoal.jar FitCoal.calculate.TruncateSFS "
+        "-input {input} > {output}" % config["basedir"]
+
+
+def get_fitcoal_trunc(trunc_txt):
+    try:
+        with open(trunc_txt, "rt") as f:
+            txt = f.readlines()
+            m = re.match(
+                r"The number of SFS types to be truncated or collapsed: (\d+) \(recommended\)",
+                txt[4],
+            )
+            assert m
+            return int(m.group(1))
+    except:
+        # sometimes their tool just prints nothing, idk why. do no trunccation in this case.
+        return 0
+
+
+def params_for_fitcoal_estimate(wildcards, input, output):
+    params = load_file(input.params)
+    params['trunc'] = get_fitcoal_trunc(input.trunc),
+    fcbase = os.path.join(config['basedir'], 'lib', 'FitCoal1.1')
+    params['jar'] = os.path.join(fcbase, "FitCoal.jar")
+    params['tables'] = os.path.join(fcbase, 'tables')
+    params['output_base'] = os.path.splitext(output[0])[0]
+    return params
+
+rule fitcoal_estimate:
+    input:
+        afs=r"{analysis}/fitcoal/afs.txt",
+        trunc=r"{analysis}/fitcoal/trunc.txt",
+        params=r"{analysis}/fitcoal/params.pkl",
+    output:
+        "{analysis}/fitcoal/output.txt",
+    resources:
+        runtime=1440,
+	mem_mb=8000,
+    params:
+        params_for_fitcoal_estimate
+    shell: 
+        "java -cp {params[0][jar]} FitCoal.calculate.SinglePopDecoder "
+        "-table {params[0][tables]} "
+        "-input {input.afs} -output {params[0][output_base]} "  # fitcoal appends .txt
+        "-generationTime 1 "
+        "-mutationRate {params[0][mutation_rate_per_kb]} "
+        "-omitEndSFS {params[0][trunc]} "
+        "-randSeed {params[0][seed]} "
+        "-genomeLength {params[0][genome_length_kbp]}"
+
+
+rule fitcoal_to_dm:
+    input:
+        params=r"{analysis}/fitcoal/params.pkl",
+        fitcoal_output=r"{analysis}/fitcoal/output.txt",
+    output:
+        r"{analysis}/fitcoal/estimates.pkl",
+    localrule: True
+    run:
+        params = load_file(input.params)
+        df = pd.read_csv(input.fitcoal_output, sep="\t")
+        Ne = df["popSize"].to_numpy()
+        eta = SizeHistory(t=df["year"].to_numpy(), c=1.0 / 2 / Ne)
+        mu = params["mutation_rate_per_kb"] / 1e3
+        dm = DemographicModel(theta=mu, rho=None, eta=eta)
+	dump_file(dm, output[0])

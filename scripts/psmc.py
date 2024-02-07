@@ -11,7 +11,7 @@ from typing import List, TextIO, Tuple, Union
 import numpy as np
 import sh
 import tskit
-from eastbay.size_history import DemographicModel, SizeHistory
+from phlash.size_history import DemographicModel, SizeHistory
 from tqdm.auto import tqdm
 
 psmc = sh.Command(os.environ.get("PSMC_PATH", "psmc"))

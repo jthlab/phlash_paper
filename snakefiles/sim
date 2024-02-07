@@ -22,7 +22,7 @@ def run_simulation(wc, input, output):
     import os
     os.environ['CUDA_VISIBLE_DEVICES'] = ""
     # prevent jax from using gpu just for sims
-    from eastbay.sim import stdpopsim_dataset, compute_truth
+    from phlash.sim import stdpopsim_dataset, compute_truth
     params = load_file(input[0])
     length_multiplier = params.get('length_multiplier', 1.0)
     bcf = wc.ext == 'bcf'
@@ -46,7 +46,8 @@ rule index_bcf:
     output: "{analysis}/{file}.bcf.csi"
     run:   
         bcftools.index(input)
-    
+
+
 rule simulate_stdpopsim:
     input: 
         "{analysis}/simulations/params.pkl"

@@ -5,3 +5,6 @@
 [submodule "lib/scrm"]
 	path = lib/scrm
 	url = https://github.com/scrm/scrm
+[submodule "lib/stairway-plot-v2"]
+	path = lib/stairway-plot-v2
+	url = https://github.com/xiaoming-liu/stairway-plot-v2

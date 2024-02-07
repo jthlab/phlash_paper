@@ -1,6 +1,5 @@
 import tszip
 import numpy as np
-import eastbay as eb
 import pickle
 import json
 import os
@@ -94,7 +93,7 @@ def subsample_unified(chrom_path, nodes):
 
 rule unified_subsample:
     input:
-        'unified/merged_metadata.pkl',
+        "unified/merged_metadata.pkl",
     output:
         multiext("unified/{population}/chr{chrom}", ".tsz", ".node_map.pkl"),
     resources:

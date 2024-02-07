@@ -1,5 +1,6 @@
-import eastbay as eb
 import cyvcf2
+
+import phlash
 
 def region_for_vcf(chrom_path):
     vcf = cyvcf2.VCF(chrom_path)
@@ -14,12 +15,12 @@ def process_chrom(conf_entry):
     path = conf_entry[0]
     if path.endswith(".tsz"):
         path, nodes = conf_entry
-        return eb.contig(path, nodes)
+        return phlash.contig(path, nodes)
     else:
         assert path.endswith(".bcf")
         path, samples = conf_entry
         region = region_for_vcf(path)
-        return eb.contig(path, samples=samples, region=region)
+        return phlash.contig(path, samples=samples, region=region)
 
 rule phlash_estimate:
     input: "{analysis}/phlash/config.pkl"
@@ -34,5 +35,5 @@ rule phlash_estimate:
         conf = load_file(input[0])
         test_data = process_chrom(conf['test_data'])
         train_data = list(map(process_chrom, conf['train_data']))
-        res = eb.fit(data=train_data, test_data=test_data, mutation_rate=conf['mutation_rate'])
+        res = phlash.fit(data=train_data, test_data=test_data, mutation_rate=conf['mutation_rate'])
         dump_file(res, output[0])

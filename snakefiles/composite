@@ -4,11 +4,11 @@ import numpy as np
 import tszip
 import os
 from collections import Counter
-import eastbay as eb
-import eastbay.plot
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-from eastbay.data import RawContig, TreeSequenceContig
+
+import phlash.plot
+from phlash.data import RawContig, TreeSequenceContig
 
 def gappy_afs(ts, spacing, window_size):
     assert spacing > window_size  # >>, in fact
@@ -79,16 +79,16 @@ rule composite_phlash_estimate:
         slurm_extra="--gpus 1",
     run:
         contigs = []
-        test_contig = eb.contig(input.test)
+        test_contig = phlash.contig(input.test)
         for tsz in input.tsz:
-            tsc = eb.contig(tsz, samples=[(0, 1)])
+            tsc = phlash.contig(tsz, samples=[(0, 1)])
             data = tsc.get_data(100)
             contigs.append(RawContig(het_matrix=data['het_matrix'], afs=None, window_size=100))
         for tsz in input.afs:
             ts = tszip.decompress(tsz)
             afs = gappy_afs(ts, 10_000, 100)
             contigs.append(RawContig(het_matrix=None, afs=afs, window_size=100))
-        res = eb.fit(contigs, test_data=test_contig, mutation_rate=config['human_mutation_rate'])
+        res = phlash.fit(contigs, test_data=test_contig, mutation_rate=config['human_mutation_rate'])
         dump_file(res, output[0])
 
 rule plot_composite_i:
@@ -101,8 +101,8 @@ rule plot_composite_i:
         os.environ['CUDA_VISIBLE_GPUS'] = ""
         dms = {k: load_file(v) for k, v in input.items()}
         fig, ax = plt.subplots()
-        eastbay.plot.plot_posterior(dms['indep'], ax, label="True lik.", t1=1e2, tM=1e5)
-        eastbay.plot.plot_posterior(dms['cl'], ax, label="Composite lik.", t1=1e2, tM=1e5)
+        phlash.plot.plot_posterior(dms['indep'], ax, label="True lik.", t1=1e2, tM=1e5)
+        phlash.plot.plot_posterior(dms['cl'], ax, label="Composite lik.", t1=1e2, tM=1e5)
         ax.set_xlabel("Generations")
         ax.set_ylabel("$N_e$")
         fig.tight_layout()

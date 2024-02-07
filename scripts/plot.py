@@ -1,8 +1,8 @@
-import eastbay.liveplot
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-from eastbay.size_history import DemographicModel, SizeHistory
+
+from phlash.size_history import DemographicModel, SizeHistory
 
 fig, ax = plt.subplots(figsize=(8, 5))
 
