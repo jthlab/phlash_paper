@@ -16,11 +16,16 @@ def process_chrom(conf_entry):
     if path.endswith(".tsz"):
         path, nodes = conf_entry
         return phlash.contig(path, nodes)
-    else:
-        assert path.endswith(".bcf")
+    elif path.endswith(".bcf"):
         path, samples = conf_entry
         region = region_for_vcf(path)
         return phlash.contig(path, samples=samples, region=region)
+    elif path.endswith(".pkl"):
+        contig = load_file(path)
+	assert isinstance(contig, phlash.data.Contig)
+	return contig
+    else:
+        raise ValueError("unknown file type")
 
 rule phlash_estimate:
     input: "{analysis}/phlash/config.pkl"

@@ -4,27 +4,32 @@ import numpy as np
 from phlash.data import RawContig
 
 ADNA_CONFIG = {
-'ancient_samples': dict(zip(['Afanasievo', 'Altai', 'Chagyrskaya', 'Denisovan', 'Vindija'], 
-    np.split(
-    [
-        [7508, 7509],
-        [7510, 7511],
-        [7512, 7513],
-        [7514, 7515],
-        [7516, 7517],
-        [7518, 7519],
-        [7520, 7521],
-        [7522, 7523],
-    ],
-    np.arange(4, 8)
-	)))
+    "ancient_samples": dict(
+        zip(
+            ["Afanasievo", "Altai", "Chagyrskaya", "Denisovan", "Vindija"],
+            np.split(
+                [
+                    [7508, 7509],
+                    [7510, 7511],
+                    [7512, 7513],
+                    [7514, 7515],
+                    [7516, 7517],
+                    [7518, 7519],
+                    [7520, 7521],
+                    [7522, 7523],
+                ],
+                np.arange(4, 8),
+            ),
+        )
+    )
 }
+
 
 def filtered_het_matrix(chrom_path, window_size):
     """create a het matrix for each sample pair in ancient samples, filtering out
     any a<->g or c<->t that are above an MAF cutoff in modern samples"""
     chrom = tszip.decompress(chrom_path)
-    ancient_samples_d = ADNA_CONFIG['ancient_samples']
+    ancient_samples_d = ADNA_CONFIG["ancient_samples"]
     ancient_nodes = np.concatenate(list(ancient_samples_d.values()))
     L = chrom.sequence_length
     w = window_size
@@ -55,40 +60,54 @@ def filtered_het_matrix(chrom_path, window_size):
         het_matrix[:, ell] += g[:, 0] != g[:, 1]
     sample_sets = [a.tolist() for a in ancient_samples_d.values()]
     afss = ts.allele_frequency_spectrum(
-        sample_sets=sample_sets,
-        span_normalise=False,
-        polarized=True
+        sample_sets=sample_sets, span_normalise=False, polarized=True
     )
-    ret = {pop: {'het_matrix': H, 'afs': a} for pop, H, a in 
-    	zip(ancient_samples_d.keys(), np.split(het_matrix, np.arange(4, 8)), afss)}
+    ret = {
+        pop: {"het_matrix": H, "afs": a}
+        for pop, H, a in zip(
+            ancient_samples_d.keys(), np.split(het_matrix, np.arange(4, 8)), afss
+        )
+    }
     return ret
 
-rule adna_unified_filtered:
-    output:
-        **{pop: f"adna/{pop}/chr{{chrom}}.filtered.pkl" for pop in ADNA_CONFIG['ancient_samples']}
-    run:
-        chrom_path = get_unified_chrom_path(chrom)
-        _, rets = filtered_het_matrix(chrom_path, 100)
-	for pop, d in rets.items():
-	    rc = RawContig(het_matrix=d['het_matrix'], afs=d['afs'], window_size=100)
-	    outpath = output[pop]
-	    dump_file(rc, outpath)
 
 rule adna_config_for_phlash:
     input:
-         expand("adna/{{pop}}/chr{chrom}.filtered.pkl", chrom=get_unified_chroms())
+        expand("adna/{{pop}}/chr{chrom}.filtered.pkl", chrom=unified_chroms()),
     output:
-        "adna/{pop}/phlash/config.pkl" 
+        "adna/{pop}/phlash/config.pkl",
     localrule: True
     run:
-        params = {'test_data': input[0], 'train_data': input[1:], 'mutation_rate': config['human_mutation_rate']}
-	dump_file(params, output)
-     
+        params = {
+            "test_data": input[0],
+            "train_data": input[1:],
+            "mutation_rate": config["human_mutation_rate"],
+        }
+        dump_file(params, output)
+
+
+rule adna_unified_filtered:
+    output:
+        **{
+            pop: f"adna/{pop}/chr{{chrom}}.filtered.pkl"
+            for pop in ADNA_CONFIG["ancient_samples"]
+        },
+    run:
+        chrom_path = get_unified_chrom_path(chrom)
+        _, rets = filtered_het_matrix(chrom_path, 100)
+        for pop, d in rets.items():
+            rc = RawContig(het_matrix=d["het_matrix"], afs=d["afs"], window_size=100)
+            outpath = output[pop]
+            dump_file(rc, outpath)
+
 
 rule adna_figure:
     input:
-        **{pop: f'adna/{pop}/phlash/estimates.pkl" for pop in ADNA_CONFIG['ancient_samples']}
+        **{
+            pop: f"adna/{pop}/phlash/estimates.pkl"
+            for pop in ADNA_CONFIG["ancient_samples"]
+        },
     output:
-        'figures/adna/plot.pdf'
-    run:
-        'notebooks/adna.py'
+        "figures/adna/plot.pdf",
+    script:
+        "notebooks/adna.py"
