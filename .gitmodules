@@ -8,3 +8,6 @@
 [submodule "lib/stairway-plot-v2"]
 	path = lib/stairway-plot-v2
 	url = https://github.com/xiaoming-liu/stairway-plot-v2
+[submodule "lib/msmc-tools"]
+	path = lib/msmc-tools
+	url = https://github.com/stschiff/msmc-tools

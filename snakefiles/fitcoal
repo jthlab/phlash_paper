@@ -67,6 +67,8 @@ rule fitcoal_estimate:
         params=r"{analysis}/fitcoal/params.pkl",
     output:
         "{analysis}/fitcoal/output.txt",
+    benchmark:
+        "{analysis}/fitcoal/bench.txt",
     resources:
         runtime=1440,
 	mem_mb=8000,

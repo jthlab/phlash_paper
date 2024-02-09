@@ -24,6 +24,8 @@ rule smcpp_estimate:
         r"{analysis}/smcpp/params.pkl"
     output:
         r"{analysis}/smcpp/model.final.json"
+    benchmark:
+        "{analysis}/smcpp/bench.txt"
     threads: 4
     resources:
         mem_mb=32000,

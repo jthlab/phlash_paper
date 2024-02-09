@@ -1,0 +1,55 @@
+import tempfile
+import os.path
+import pandas as pd
+
+from phlash.size_history import SizeHistory, DemographicModel
+
+rule msmc2_multihetsep:
+    input:
+        "{analysis}/simulations/chr{chrom}.bcf"
+    output:
+        r"{analysis}/n{n}/chr{chrom}.multihetsep.txt"
+    shell:
+    	f"{config['basedir']}/scripts/multihetsep.sh {{input}} {{wildcards.n}} > {{output}}"
+
+
+def _is_large(wc):
+    return int(wc.n) == 10 and int(wc.i) in [9, 10]
+
+rule run_msmc2:
+    input:
+        "h2h/model{i}/rep{j}/n{n}/msmc2/params.pkl"
+    output:
+        "h2h/model{i}/rep{j}/n{n}/msmc2/output.final.txt"
+    benchmark:
+        "h2h/model{i}/rep{j}/n{n}/msmc2/bench.txt"
+    threads: 4
+    resources:
+        slurm_partition=lambda wc: "largemem" if _is_large(wc) else "standard",
+        mem_mb=lambda wc: 256000 if _is_large(wc) else 128000,
+	runtime=1440,
+    run:
+        n = int(wildcards.n)
+        pairs = ",".join(f"{2 * i}-{2 * i + 1}" for i in range(n))
+        params = load_file(input[0])
+	outdir = os.path.dirname(output[0])
+	hets = " ".join(params['multihet_seps'])
+	shell(f"{config['basedir']}/lib/msmc2_Linux -o {outdir}/output -I {pairs} -t4 {hets}")
+
+rule msmc2_to_dm:
+    input: 
+        params="{analysis}/msmc2/params.pkl",
+        msmc2_output="{analysis}/msmc2/output.final.txt",
+    output: "{analysis}/msmc2/estimates.pkl"
+    run:
+        params = load_file(input.params)
+	mu = params['mutation_rate']
+        df = pd.read_csv(input.msmc2_output, sep="\t")
+	# scaling is from: 
+	# https://github.com/stschiff/msmc-tools/blob/master/msmc-tutorial/guide.md#plotting-in-r
+	t = df['left_time_boundary'].to_numpy() / mu
+	Ne = 1 / df['lambda'].to_numpy() / (2 * mu)
+	c = 1 / 2 / Ne
+	eta = SizeHistory(t=t, c=c)
+	dm = DemographicModel(eta=eta, theta=mu, rho=None)
+	dump_file(dm, output[0])

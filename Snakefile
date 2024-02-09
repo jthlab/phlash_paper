@@ -59,6 +59,7 @@ for mod in [
     "bottleneck",
     "composite",
     "fitcoal",
+    "msmc2"
 ]:
 
     include: f"snakefiles/{mod}"

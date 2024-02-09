@@ -25,6 +25,7 @@ def process_chrom(conf_entry):
 rule phlash_estimate:
     input: "{analysis}/phlash/config.pkl"
     output: "{analysis}/phlash/estimates.pkl"
+    benchmark: "{analysis}/phlash/bench.txt",
     resources:
         mem_mb=32000,
         gpus=1,
