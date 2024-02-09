@@ -4,7 +4,8 @@ import numpy as np
 from phlash.data import RawContig
 
 ADNA_CONFIG = {
-'ancient_samples': np.array(
+'ancient_samples': dict(zip(['Afanasievo', 'Altai', 'Chagyrskaya', 'Denisovan', 'Vindija'], 
+    np.split(
     [
         [7508, 7509],
         [7510, 7511],
@@ -15,29 +16,32 @@ ADNA_CONFIG = {
         [7520, 7521],
         [7522, 7523],
     ],
-    dtype=int,
-)
+    np.arange(4, 8)
+	)))
 }
 
 def filtered_het_matrix(chrom_path, window_size):
     """create a het matrix for each sample pair in ancient samples, filtering out
     any a<->g or c<->t that are above an MAF cutoff in modern samples"""
     chrom = tszip.decompress(chrom_path)
-    ancient_samples = ADNA_CONFIG['ancient_samples']
-    ancient_nodes = list(map(list, ancient_samples))
+    ancient_samples_d = ADNA_CONFIG['ancient_samples']
+    ancient_nodes = np.concatenate(list(ancient_samples_d.values()))
     L = chrom.sequence_length
     w = window_size
-    ret = np.zeros([len(ancient_samples), int(L // w + 1)], dtype=np.int8)
+    het_matrix = np.zeros([len(ancient_nodes), int(L // w + 1)], dtype=np.int8)
     A = np.array(tskit.ALLELES_ACGT)
     I = np.arange(2 * chrom.num_individuals)
-    modern_mask = np.all(I[:, None, None] != ancient_samples[None], (1, 2))
+    # all the modern samples have node ids < 7508
+    # modern_mask = np.all(I[:, None, None] != ancient_nodes[None], (1, 2))
+    modern_mask = slice(None, 7508, None)
+    ancient_mask = slice(7508, None, None)
     DEAM = {frozenset({"C", "T"}), frozenset({"A", "G"})}
     for v in chrom.variants(alleles=tskit.ALLELES_ACGT):
         if len(np.unique(v.genotypes)) > 2:
             # restrict to biallelic for simplicity
             continue
         a = v.site.ancestral_state
-        adna_gt = A[v.genotypes[~modern_mask]]
+        adna_gt = A[v.genotypes[ancient_mask]]
         if np.all(adna_gt == a):
             continue
         b = adna_gt[adna_gt != a].reshape(-1)[0]
@@ -47,20 +51,44 @@ def filtered_het_matrix(chrom_path, window_size):
         if DEAM and modern_maf <= 5:
             continue
         ell = int(v.position / w)
-        g = v.genotypes[ancient_samples]
-        ret[:, ell] += g[:, 0] != g[:, 1]
-    afs = ts.allele_frequency_spectrum(
-        sample_sets=[],
+        g = v.genotypes[ancient_nodes]
+        het_matrix[:, ell] += g[:, 0] != g[:, 1]
+    sample_sets = [a.tolist() for a in ancient_samples_d.values()]
+    afss = ts.allele_frequency_spectrum(
+        sample_sets=sample_sets,
         span_normalise=False,
         polarized=True
     )
-
-    return (chrom_path, ret)
+    ret = {pop: {'het_matrix': H, 'afs': a} for pop, H, a in 
+    	zip(ancient_samples_d.keys(), np.split(het_matrix, np.arange(4, 8)), afss)}
+    return ret
 
 rule adna_unified_filtered:
     output:
-        "adna/chr{chrom}.filtered.pkl"
+        **{pop: f"adna/{pop}/chr{{chrom}}.filtered.pkl" for pop in ADNA_CONFIG['ancient_samples']}
     run:
         chrom_path = get_unified_chrom_path(chrom)
-        _, het_matrix = filtered_het_matrix(chrom_path, 100)
-        rc = RawContig(het_matrix=het_matrix, afs=np.ones(1), window_size=100)
+        _, rets = filtered_het_matrix(chrom_path, 100)
+	for pop, d in rets.items():
+	    rc = RawContig(het_matrix=d['het_matrix'], afs=d['afs'], window_size=100)
+	    outpath = output[pop]
+	    dump_file(rc, outpath)
+
+rule adna_config_for_phlash:
+    input:
+         expand("adna/{{pop}}/chr{chrom}.filtered.pkl", chrom=get_unified_chroms())
+    output:
+        "adna/{pop}/phlash/config.pkl" 
+    localrule: True
+    run:
+        params = {'test_data': input[0], 'train_data': input[1:], 'mutation_rate': config['human_mutation_rate']}
+	dump_file(params, output)
+     
+
+rule adna_figure:
+    input:
+        **{pop: f'adna/{pop}/phlash/estimates.pkl" for pop in ADNA_CONFIG['ancient_samples']}
+    output:
+        'figures/adna/plot.pdf'
+    run:
+        'notebooks/adna.py'
