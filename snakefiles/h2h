@@ -5,12 +5,15 @@ from itertools import product
 from collections import defaultdict
 from functools import cache
 
+import cyvcf2
 import stdpopsim
+
 
 wildcard_constraints:
     n=r"\d+",
     i=r"\d+",
-    j=r"\d+"
+    j=r"\d+",
+
 
 H2H_PARAMS = {
     "models": [
@@ -29,9 +32,14 @@ H2H_PARAMS = {
         ("PonAbe", "TwoSpecies_2L11", "Bornean"),
     ],
     "methods": ["smcpp", "phlash", "fitcoal", "msmc2"],
-    "limits": {"psmc": [1, 10], "smcpp": [1, 10], "fitcoal": [10, 100], "msmc2": [1, 10]},
+    "limits": {
+        "psmc": [1, 10],
+        "smcpp": [1, 10],
+        "fitcoal": [10, 100],
+        "msmc2": [1, 10],
+    },
     "sample_sizes": [1, 10, 100],
-    "num_replicates": 1,
+    "num_replicates": 3,
     "length_multiplier": 1.0,
 }
 
@@ -124,7 +132,7 @@ def h2h_chroms_for(wc):
     i = int(wc.i)
     species, _, _ = H2H_PARAMS["models"][i]
     yield from get_chroms(species)
-    
+
 
 ## SMCPP
 
@@ -156,7 +164,10 @@ rule h2h_config_for_smcpp:
 
 def input_for_phlash_config(wc):
     ret = {
-        "bcf": ["h2h/model{i}/rep{j}/simulations/chr%s.bcf" % chrom for chrom in h2h_chroms_for(wc)]
+        "bcf": [
+            "h2h/model{i}/rep{j}/simulations/chr%s.bcf" % chrom
+            for chrom in h2h_chroms_for(wc)
+        ]
     }
     ret["csi"] = [f + ".csi" for f in ret["bcf"]]
     return ret
@@ -169,8 +180,13 @@ rule h2h_config_for_phlash:
         r"h2h/model{i}/rep{j}/n{n}/phlash/config.pkl",
     localrule: True
     run:
-        test_chrom = input.bcf[0]
-        train_chroms = input.bcf[1:]
+        def _chrom_size(bcf):
+            return cyvcf2.VCF(bcf).seqlens[0]
+
+
+        chroms_sorted = sorted(input.bfc, key=_chrom_size)
+        test_chrom = chroms_sorted[0]
+        train_chroms = chroms_sorted[1:]
         n = int(wildcards.n)
         samples = [f"sample{i}" for i in range(n)]
         ret = {}
@@ -186,7 +202,9 @@ rule h2h_config_for_phlash:
 
 
 def input_for_fitcoal_config(wc):
-    return ["h2h/model{i}/rep{j}/n{n}/chr%s.afs.txt" % chrom for chrom in h2h_chroms_for(wc)]
+    return [
+        "h2h/model{i}/rep{j}/n{n}/chr%s.afs.txt" % chrom for chrom in h2h_chroms_for(wc)
+    ]
 
 
 rule h2h_config_for_fitcoal:
@@ -218,24 +236,31 @@ rule h2h_config_for_fitcoal:
 
 ## MSMC2
 
+
 def input_for_msmc2_config(wc):
-    return ["h2h/model{i}/rep{j}/n{n}/chr%s.multihetsep.txt" % chrom 
-            for chrom in h2h_chroms_for(wc)]
+    return [
+        "h2h/model{i}/rep{j}/n{n}/chr%s.multihetsep.txt" % chrom
+        for chrom in h2h_chroms_for(wc)
+    ]
+
 
 rule h2h_config_for_msmc2:
-    input: input_for_msmc2_config
-    output: "h2h/model{i}/rep{j}/n{n}/msmc2/params.pkl"
+    input:
+        input_for_msmc2_config,
+    output:
+        "h2h/model{i}/rep{j}/n{n}/msmc2/params.pkl",
     localrule: True
     run:
         i = int(wildcards.i)
         species, _, _ = H2H_PARAMS["models"][i]
         ret = {}
         ret["mutation_rate"] = get_default_mutation_rate(species)
-	ret["multihet_seps"] = input
+        ret["multihet_seps"] = input
         dump_file(ret, output[0])
 
 
 ## PLOTTING
+
 
 def input_for_h2h_figure(wc):
     i = int(wc.i)
@@ -286,6 +311,6 @@ ALL_OUTPUT.extend(
     [
         f"figures/h2h/model{i}.n{n}.pdf"
         for i in range(len(H2H_PARAMS["models"]))
-        for n in H2H_PARAMS['sample_sizes']
+        for n in H2H_PARAMS["sample_sizes"]
     ]
 )
