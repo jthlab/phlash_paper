@@ -7,3 +7,5 @@ config:
   - basedir="/home/terhorst/Dropbox (University of Michigan)/Research/eastbay/paper_repo"
   - workdir="/scratch/eastbay_paper/simulation_results_full"
   - bcftools_path="/usr/bin/bcftools"
+  - scrm_path="/usr/bin/scrm"
+  - psmc_path="/usr/bin/psmc"

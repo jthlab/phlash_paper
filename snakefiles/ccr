@@ -14,7 +14,7 @@ rule ccr_sim_params:
     run:
         metadata = load_file(input[0])
         pop_dict = {
-            k: len(unified_nodes_for_popid(pop, metadata)) for pop in ["Yoruba", "Han"]
+            pop: len(unified_nodes_for_pop(pop, metadata)) for pop in ["Yoruba", "Han"]
         }
         params = {
             "species": "HomSap",

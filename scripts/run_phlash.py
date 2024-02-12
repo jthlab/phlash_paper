@@ -1,9 +1,9 @@
-import os
-
-import cyvcf2
+import pickle
 import jax
 import phlash
-
+import sys
+import cyvcf2
+import os
 
 def region_for_vcf(chrom_path):
     vcf = cyvcf2.VCF(chrom_path)
@@ -31,25 +31,15 @@ def process_chrom(conf_entry):
         raise ValueError("unknown file type")
 
 
-def _phlash_random_account(wc):
-    return 'jonth0'
-    b = ord(os.urandom(1))
-    return 'jonth0' if b % 2 == 0 else 'stats_dept1'
-    
-
-rule phlash_estimate:
-    input:
-        "{analysis}/phlash/config.pkl",
-    output:
-        "{analysis}/phlash/estimates.pkl",
-    benchmark:
-        "{analysis}/phlash/bench.txt"
-    resources:
-        mem_mb=47000,
-        gpus=1,
-        runtime=120,
-	slurm_account=_phlash_random_account,
-        slurm_partition="spgpu,gpu,gpu_mig40",
-        slurm_extra="--gpus 1",
-    shell:
-        f"{config['basedir']}/scripts/phlash.sh {{input}} {{output}}"
+if __name__ == "__main__":
+    assert jax.local_devices()[0].platform == "gpu"
+    conf = pickle.load(open(sys.argv[1], "rb"))
+    test_data = process_chrom(conf["test_data"])
+    train_data = list(map(process_chrom, conf["train_data"]))
+    res = phlash.fit(
+        data=train_data,
+        test_data=test_data,
+        mutation_rate=conf["mutation_rate"],
+        fold_afs=False,
+    )
+    pickle.dump(res, open(sys.argv[2], "wb"))

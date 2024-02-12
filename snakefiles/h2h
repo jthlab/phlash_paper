@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
 
 from itertools import product
 from collections import defaultdict
@@ -43,6 +44,7 @@ H2H_PARAMS = {
     "length_multiplier": 1.0,
 }
 
+H2H_PARAMS['colors'] = dict(zip(H2H_PARAMS['methods'], matplotlib.colormaps['Set1'].colors))
 
 def get_default_mutation_rate(species_name):
     return stdpopsim.get_species(species_name).genome.mean_mutation_rate
@@ -184,7 +186,7 @@ rule h2h_config_for_phlash:
             return cyvcf2.VCF(bcf).seqlens[0]
 
 
-        chroms_sorted = sorted(input.bfc, key=_chrom_size)
+        chroms_sorted = sorted(input.bcf, key=_chrom_size)
         test_chrom = chroms_sorted[0]
         train_chroms = chroms_sorted[1:]
         n = int(wildcards.n)
@@ -282,11 +284,12 @@ rule h2h_figure:
         r"figures/h2h/model{i}.n{n}.pdf",
     localrule: True
     run:
-        T = np.geomspace(1e1, 1e5, 1000)
+        T = np.geomspace(1e1, 1e6, 1000)
         i = int(wildcards.i)
         model = H2H_PARAMS["models"][i]
         fig, ax = plt.subplots()
         truth = get_truth(*model)
+	cm = H2H_PARAMS['colors']
         ax.plot(T, truth.eta(T, Ne=True), color="black")
         for method, paths in input.items():
             Nes = []
@@ -299,10 +302,10 @@ rule h2h_figure:
                     )
                 else:
                     Ne = dm.rescale(truth.theta).eta(T, Ne=True)
-                Nes.append(Ne)
-            ax.plot(T, np.mean(Nes, 0), label=method)
+                ax.plot(T, Ne, label=method, color=cm[method])
         ax.set_xscale("log")
         ax.set_yscale("log")
+	ax.set_ylim(1e3, 1e7)
         ax.legend()
         fig.savefig(output[0])
 
