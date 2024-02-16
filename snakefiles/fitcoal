@@ -6,7 +6,7 @@ import pandas as pd
 
 rule bcf_afs:
     input:
-        multiext("{analysis}/simulations/chr{chrom}", ".bcf", ".bcf.csi"),
+        [ancient(f"{{analysis}}/simulations/chr{{chrom}}.{ext}") for ext in ["bcf", "bcf.csi"]]
     output:
         r"{analysis}/n{n,\d+}/chr{chrom}.afs.txt",
     run:

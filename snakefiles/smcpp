@@ -10,7 +10,7 @@ from phlash.size_history import SizeHistory, DemographicModel
 
 rule smcpp_vcf2smc:
     input:
-        multiext("{analysis}/simulations/chr{chrom}", ".bcf", ".bcf.csi")
+        [ancient(f"{{analysis}}/simulations/chr{{chrom}}.{ext}") for ext in ["bcf", "bcf.csi"]]
     output:
         r"{analysis}/n{n,\d+}/smcpp/chr{chrom}.smc.gz"
     run:

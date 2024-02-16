@@ -42,20 +42,29 @@ def run_simulation(wc, input, output):
         bcftools.view('-o', output[0], _in=data)
 
 rule index_bcf:
-    input: "{analysis}/{file}.bcf"
+    input: ancient("{analysis}/{file}.bcf")
     output: "{analysis}/{file}.bcf.csi"
     run:   
         bcftools.index(input)
 
+def _sim_runtime(wc, input):
+    params = load_file(input[0])
+    n = sum(params['populations'].values())
+    return 240 if n < 200 else 1440
+    
+def _sim_mem(wc, input):
+    params = load_file(input[0])
+    n = sum(params['populations'].values())
+    return 12_000 if n < 200 else 47_000
 
 rule simulate_stdpopsim:
     input: 
-        "{analysis}/simulations/params.pkl"
+        ancient("{analysis}/simulations/params.pkl")
     output:
         "{analysis}/simulations/chr{chrom}.{ext,(tsz|bcf)}"
     resources:
-        runtime=240,
-        mem_mb=10000,
+        runtime=_sim_runtime,
+        mem_mb=_sim_mem,
     run:
         run_simulation(wildcards, input, output)
 

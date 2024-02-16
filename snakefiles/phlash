@@ -37,6 +37,13 @@ def _phlash_random_account(wc):
     return 'jonth0' if b % 2 == 0 else 'stats_dept1'
     
 
+def _phlash_mem(wc, input):
+    config = load_file(input[0])
+    _, samples = config['test_data']
+    if len(samples) > 200:
+        return 95000
+    return 47000
+
 rule phlash_estimate:
     input:
         "{analysis}/phlash/config.pkl",
@@ -45,11 +52,11 @@ rule phlash_estimate:
     benchmark:
         "{analysis}/phlash/bench.txt"
     resources:
-        mem_mb=47000,
+        mem_mb=_phlash_mem,
         gpus=1,
         runtime=120,
 	slurm_account=_phlash_random_account,
-        slurm_partition="spgpu,gpu,gpu_mig40",
+        slurm_partition="gpu,gpu_mig40,spgpu",
         slurm_extra="--gpus 1",
     shell:
         f"{config['basedir']}/scripts/phlash.sh {{input}} {{output}}"

@@ -6,7 +6,7 @@ from phlash.size_history import SizeHistory, DemographicModel
 
 rule msmc2_multihetsep:
     input:
-        "{analysis}/simulations/chr{chrom}.bcf"
+        ancient("{analysis}/simulations/chr{chrom}.bcf")
     output:
         r"{analysis}/n{n}/chr{chrom}.multihetsep.txt"
     shell:

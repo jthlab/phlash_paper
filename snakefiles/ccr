@@ -125,4 +125,4 @@ rule plot_ccr:
         "../notebooks/ccr.py"
 
 
-ALL_OUTPUT.append("figures/ccr/plot.pdf")
+# ALL_OUTPUT.append("figures/ccr/plot.pdf")

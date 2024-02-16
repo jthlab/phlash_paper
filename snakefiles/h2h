@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
+import pandas as pd
+import tqdm.auto as tqdm
 
 from itertools import product
 from collections import defaultdict
@@ -42,9 +44,13 @@ H2H_PARAMS = {
     "sample_sizes": [1, 10, 100],
     "num_replicates": 3,
     "length_multiplier": 1.0,
+    "T": np.geomspace(1e1, 1e6, 1000),
 }
 
-H2H_PARAMS['colors'] = dict(zip(H2H_PARAMS['methods'], matplotlib.colormaps['Set1'].colors))
+H2H_PARAMS["colors"] = dict(
+    zip(H2H_PARAMS["methods"], matplotlib.colormaps["Set1"].colors)
+)
+
 
 def get_default_mutation_rate(species_name):
     return stdpopsim.get_species(species_name).genome.mean_mutation_rate
@@ -82,13 +88,17 @@ def get_truth(species_name, demographic_model, population):
 
 rule h2h_config_sim:
     output:
-        "h2h/model{i}/rep{j}/simulations/params.pkl",
+        r"h2h/model{i}/rep{j}/{big,(big\/)?}simulations/params.pkl",
     localrule: True
     run:
         i = int(wildcards.i)
         j = int(wildcards.j)
         species, model, population = H2H_PARAMS["models"][i]
-        n = max(H2H_PARAMS["sample_sizes"])
+        if wildcards.big == "big/":
+            n = 1000
+        else:
+            assert wildcards.big == ""
+            n = max(H2H_PARAMS["sample_sizes"])
         pop_dict = {population: n}
         seed = j
         params = dict(
@@ -165,9 +175,11 @@ rule h2h_config_for_smcpp:
 
 
 def input_for_phlash_config(wc):
+    n = int(wc.n)
+    big = "big/" if n == 1000 else ""
     ret = {
         "bcf": [
-            "h2h/model{i}/rep{j}/simulations/chr%s.bcf" % chrom
+            ancient(f"h2h/model{{i}}/rep{{j}}/{big}simulations/chr{chrom}.bcf")
             for chrom in h2h_chroms_for(wc)
         ]
     }
@@ -267,6 +279,8 @@ rule h2h_config_for_msmc2:
 def input_for_h2h_figure(wc):
     i = int(wc.i)
     n = int(wc.n)
+    if n == 1000:
+        return {"phlash": f"h2h/model{i}/rep0/n1000/phlash/estimates.pkl"}
     ret = {}
     for method in H2H_PARAMS["methods"]:
         if n in H2H_PARAMS["limits"].get(method, H2H_PARAMS["sample_sizes"]):
@@ -284,12 +298,12 @@ rule h2h_figure:
         r"figures/h2h/model{i}.n{n}.pdf",
     localrule: True
     run:
-        T = np.geomspace(1e1, 1e6, 1000)
+        T = H2H_PARAMS["T"]
         i = int(wildcards.i)
         model = H2H_PARAMS["models"][i]
         fig, ax = plt.subplots()
         truth = get_truth(*model)
-	cm = H2H_PARAMS['colors']
+        cm = H2H_PARAMS["colors"]
         ax.plot(T, truth.eta(T, Ne=True), color="black")
         for method, paths in input.items():
             Nes = []
@@ -302,12 +316,191 @@ rule h2h_figure:
                     )
                 else:
                     Ne = dm.rescale(truth.theta).eta(T, Ne=True)
-                ax.plot(T, Ne, label=method, color=cm[method])
+                Nes.append(Ne)
+            ax.plot(T, np.median(Nes, 0), label=method, color=cm[method], alpha=0.8)
+            for f in [np.max, np.min]:
+                ax.plot(
+                    T,
+                    f(Nes, axis=0),
+                    color=cm[method],
+                    linestyle="--",
+                    linewidth=0.5,
+                    alpha=0.8,
+                )
         ax.set_xscale("log")
         ax.set_yscale("log")
-	ax.set_ylim(1e3, 1e7)
         ax.legend()
         fig.savefig(output[0])
+
+
+def input_for_h2h_figure_combined(wc):
+    # we don't actually use the pdfs as input, just ensures all the other inputs are
+    # available
+    return [
+        f"figures/h2h/model{i}.n{n}.pdf"
+        for i, _ in enumerate(H2H_PARAMS["models"])
+        for n in H2H_PARAMS["sample_sizes"]
+    ]
+
+
+rule h2h_figure_combined:
+    input:
+        input_for_h2h_figure_combined,
+    output:
+        r"figures/h2h/combined{i,\d+}.pdf",
+    localrule: True
+    run:
+        T = H2H_PARAMS["T"]
+        i = int(wildcards.i)
+        models = H2H_PARAMS["models"]
+
+
+        def keyfun(mdl):
+            species, dm, pop = mdl
+            if isinstance(dm, str):
+                return mdl
+            return (species, "Constant", pop)
+
+
+        mdls = sorted(models, key=keyfun)[3 * i : 3 * i + 3]
+        fig, axss = plt.subplots(
+            nrows=3,
+            ncols=3,
+            figsize=(11 - 1, 8.5 - 1),
+            dpi=300,
+            sharex=True,
+            sharey="row",
+        )
+        for mdl, axs in zip(mdls, axss):
+            i = models.index(mdl)
+            for n, ax in zip([1, 10, 100], axs):
+                truth = get_truth(*mdl)
+                cm = H2H_PARAMS["colors"]
+                ax.plot(T, truth.eta(T, Ne=True), color="black")
+                for method in H2H_PARAMS["methods"]:
+                    if n in H2H_PARAMS["limits"].get(
+                        method, H2H_PARAMS["sample_sizes"]
+                    ):
+                        paths = [
+                            f"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl"
+                            for j in range(H2H_PARAMS["num_replicates"])
+                        ]
+                        Nes = []
+                        for path in paths:
+                            dm = load_file(path)
+                            if method == "phlash":
+                                # list of posterior samples from dm, take posterior median as point estimate
+                                Ne = np.median(
+                                    [
+                                        d.rescale(truth.theta).eta(T, Ne=True)
+                                        for d in dm
+                                    ],
+                                    axis=0,
+                                )
+                            else:
+                                Ne = dm.rescale(truth.theta).eta(T, Ne=True)
+                            Nes.append(Ne)
+                        ax.plot(
+                            T,
+                            np.mean(Nes, 0),
+                            label=method,
+                            color=cm[method],
+                            alpha=0.8,
+                        )
+                        for f in [np.max, np.min]:
+                            ax.plot(
+                                T,
+                                f(Nes, axis=0),
+                                color=cm[method],
+                                linestyle="--",
+                                linewidth=0.5,
+                                alpha=0.8,
+                            )
+                for d in ["top", "right"]:
+                    ax.spines[d].set_visible(False)
+                ax.set_xscale("log")
+                ax.set_yscale("log")
+        for i, n in enumerate([1, 10, 100]):
+            axss[0, i].set_title(f"$n={n}$")
+        for j, mdl in enumerate(map(keyfun, mdls)):
+            y, _ = axss[j, 0].get_ylim()
+            axss[j, 0].text(1e1, 1.05 * y, f"{mdl[0]}/{mdl[1]}", fontsize=8)
+        axss[0, 1].legend()
+        axss[1, 0].set_ylabel("$N_e(t)$")
+        axss[2, 1].set_xlabel("Time (generations ago)")
+        fig.tight_layout()
+        fig.savefig(output[0])
+
+
+def _mdl_keyfun(mdl):
+    species, dm, pop = mdl
+    if isinstance(dm, str):
+        return mdl
+    return (species, "Constant", pop)
+
+
+rule h2h_table_error_entry:
+    input:
+        r"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl",
+    output:
+        r"h2h/model{i}/rep{j}/n{n}/{method}/error.pkl",
+    run:
+        i = int(wildcards.i)
+        j = int(wildcards.j)
+        n = int(wildcards.n)
+        method = wildcards.method
+        mdl = H2H_PARAMS["models"][i]
+        truth = get_truth(*mdl)
+        dm = load_file(input[0])
+        if method == "phlash":
+            t = np.array(
+                sorted({float(ti) for d in dm for ti in d.rescale(truth.theta).eta.t})
+            )
+            # list of posterior samples from dm, take posterior median as point estimate
+            c = np.median([d.rescale(truth.theta).eta(t) for d in dm], axis=0)
+            eta = SizeHistory(t=t, c=c)
+        else:
+            eta = dm.rescale(truth.theta).eta
+        ret = {}
+        ret["model"] = _mdl_keyfun(mdl)[1]
+        ret["rep"] = j
+        ret["n"] = n
+        tvs = [float(truth.eta.tv(eta, i)) for i in range(1, n + 1)]
+        ret["tv1"] = tvs[0]
+        ret["tvn"] = np.mean(tvs)
+        ret["l2"] = truth.eta.l2(eta, 1e6)
+        dump_file(ret, output[0])
+
+
+def input_for_h2h_table(wc):
+    for i, model in enumerate(H2H_PARAMS["models"]):
+        for j in range(H2H_PARAMS["num_replicates"]):
+            for method in H2H_PARAMS["methods"]:
+                for n in H2H_PARAMS["sample_sizes"]:
+                    if n in H2H_PARAMS["limits"].get(
+                        method, H2H_PARAMS["sample_sizes"]
+                    ): 
+                        yield f"h2h/model{i}/rep{j}/n{n}/{method}/error.pkl"
+        yield f"h2h/model{i}/rep0/n1000/phlash/error.pkl"
+
+
+
+rule h2h_table:
+    input:
+        input_for_h2h_table,
+    output:
+        "tables/h2h.df.pkl",
+    run:
+        records = list(map(load_file, input))
+        df = pd.DataFrame.from_records(records)
+        dump_file(df, output[0])
+
+
+# localrule h2h_figure_combined_big:
+#     input:
+#         input_for_h2h_figure_combined,
+#     output:
+#         r"figures/h2h/big{i,\d+}.pdf"
 
 
 ALL_OUTPUT.extend(
@@ -317,3 +510,6 @@ ALL_OUTPUT.extend(
         for n in H2H_PARAMS["sample_sizes"]
     ]
 )
+
+ALL_OUTPUT.extend([f"figures/h2h/combined{i}.pdf" for i in range(4)])
+ALL_OUTPUT.append("tables/h2h.df.pkl")
