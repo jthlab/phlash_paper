@@ -35,13 +35,18 @@ def _phlash_random_account(wc):
     return 'jonth0'
     b = ord(os.urandom(1))
     return 'jonth0' if b % 2 == 0 else 'stats_dept1'
-    
+
 
 def _phlash_mem(wc, input):
     config = load_file(input[0])
-    _, samples = config['test_data']
-    if len(samples) > 200:
-        return 95000
+    try:
+        _, samples = config['test_data']
+        if samples is None:
+            return 47000
+        if len(samples) > 200:
+            return 128000
+    except:
+        pass
     return 47000
 
 rule phlash_estimate:
@@ -51,12 +56,13 @@ rule phlash_estimate:
         "{analysis}/phlash/estimates.pkl",
     benchmark:
         "{analysis}/phlash/bench.txt"
+    threads: 8,
     resources:
         mem_mb=_phlash_mem,
         gpus=1,
-        runtime=120,
-	slurm_account=_phlash_random_account,
+        runtime=240,
+        slurm_account=_phlash_random_account,
         slurm_partition="gpu,gpu_mig40,spgpu",
         slurm_extra="--gpus 1",
     shell:
-        f"{config['basedir']}/scripts/phlash.sh {{input}} {{output}}"
+        f"{config['basedir']}/scripts/phlash.sh '{{input}}' '{{output}}'"

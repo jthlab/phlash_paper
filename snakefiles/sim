@@ -1,10 +1,15 @@
 import numpy as np
-import sh
 import os
 
 import stdpopsim
+import tszip
 
-bcftools = sh.Command(config['bcftools_path'])
+from phlash.sim import (
+    _find_stdpopsim_model,
+    stdpopsim_dataset,
+    compute_truth,
+    _simulate_scrm,
+)
 
 def get_chroms(species_name):
     species = stdpopsim.get_species(species_name)
@@ -18,66 +23,93 @@ def get_chroms(species_name):
         ):
             yield chrom.id
 
-def run_simulation(wc, input, output):
-    import os
-    os.environ['CUDA_VISIBLE_DEVICES'] = ""
-    # prevent jax from using gpu just for sims
-    from phlash.sim import stdpopsim_dataset, compute_truth
+
+def run_scrm(wc, input, output):
     params = load_file(input[0])
-    length_multiplier = params.get('length_multiplier', 1.0)
-    bcf = wc.ext == 'bcf'
-    res = stdpopsim_dataset(
-        species_id=params['species'],
-        model_id=params['model'],
-        populations=params['populations'],
-        contigs=[wc.chrom],
-        seed=params['seed'],
-        use_scrm=bcf,
-        options=dict(return_vcf=bcf, length_multiplier=length_multiplier)
+    species, model = _find_stdpopsim_model(params["species"], params["model"])
+    populations = params["populations"]
+    assert len(populations) in [1, 2]
+    pop_dict = {pop.name: 0 for pop in model.populations}
+    pop_dict.update(populations)
+    mu = species.genome.chromosomes[0].mutation_rate
+    seed = params["seed"]
+    length_multiplier = params.get("length_multiplier", 1.0)
+    chrom = species.get_contig(
+        wc.chrom, mutation_rate=mu, length_multiplier=length_multiplier
     )
-    data = res['data'][wc.chrom]
-    if not bcf:
-        tszip.compress(data.ts, output[0])
-    else:
-        bcftools.view('-o', output[0], _in=data)
+    _simulate_scrm(
+        model, chrom, pop_dict, params["N0"], seed, False, out_file=output[0]
+    )
+
+
+def run_simulation(wc, input, output):
+    params = load_file(input[0])
+    seed = params["seed"]
+    length_multiplier = params.get("length_multiplier", 1.0)
+    res = stdpopsim_dataset(
+        species_id=params["species"],
+        model_id=params["model"],
+        populations=params["populations"],
+        contigs=[wc.chrom],
+        seed=params["seed"],
+        use_scrm=False,
+        options=dict(length_multiplier=length_multiplier),
+    )
+    data = res["data"][wc.chrom]
+    tszip.compress(data.ts, output[0])
+
 
 rule index_bcf:
-    input: ancient("{analysis}/{file}.bcf")
-    output: "{analysis}/{file}.bcf.csi"
-    run:   
-        bcftools.index(input)
-
-def _sim_runtime(wc, input):
-    params = load_file(input[0])
-    n = sum(params['populations'].values())
-    return 240 if n < 200 else 1440
-    
-def _sim_mem(wc, input):
-    params = load_file(input[0])
-    n = sum(params['populations'].values())
-    return 12_000 if n < 200 else 47_000
-
-rule simulate_stdpopsim:
-    input: 
-        ancient("{analysis}/simulations/params.pkl")
+    input:
+        ancient("{analysis}/{file}.bcf"),
     output:
-        "{analysis}/simulations/chr{chrom}.{ext,(tsz|bcf)}"
+        "{analysis}/{file}.bcf.csi",
+    shell:
+        f"{config['bcftools_path']} index {{input}}"
+
+rule simulate_stdpopsim_scrm:
+    input:
+        ancient("{analysis}/simulations/params.pkl"),
+    output:
+        temporary("{analysis}/simulations/chr{chrom}.scrm_out.txt"),
     resources:
-        runtime=_sim_runtime,
-        mem_mb=_sim_mem,
+        runtime=120,
+        mem_mb=16000,
+    run:
+        run_scrm(wildcards, input, output)
+
+
+rule scrm_to_bcf:
+    input:
+        scrm_out="{analysis}/simulations/chr{chrom}.scrm_out.txt",
+    output:
+        "{analysis}/simulations/chr{chrom}.bcf",
+    shell:
+        f"{config['basedir']}/scripts/scrm2bcf.sh {{wildcards.chrom}} {{input.scrm_out}} {{output}}"
+
+
+rule simulate_stdpopsim_ts:
+    input:
+        ancient("{analysis}/simulations/params.pkl"),
+    output:
+        "{analysis}/simulations/chr{chrom}.tsz",
+    resources:
+        runtime=120,
+        mem_mb=16000,
     run:
         run_simulation(wildcards, input, output)
 
-rule truth_size_history_function:
-    input: 
-        "{analysis}/simulations/params.pkl"
+
+rule true_size_history_function:
+    input:
+        "{analysis}/simulations/params.pkl",
     output:
-        "{analysis}/simulations/truth.pkl"
+        "{analysis}/simulations/truth.pkl",
     run:
         params = load_file(input[0])
-        species = stdpopsim.get_species(params['species'])
-        model = species.get_demographic_model(params['model'])
-        populations = params['populations']
+        species = stdpopsim.get_species(params["species"])
+        model = species.get_demographic_model(params["model"])
+        populations = params["populations"]
         assert len(populations) in (1, 2)
         truth = compute_truth(model, list(populations))
         dump_file(truth, output[0])

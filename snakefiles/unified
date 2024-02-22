@@ -7,6 +7,8 @@ import os.path
 import glob
 import re
 
+import phlash
+from phlash.data import RawContig
 
 def path_for_unified_chrom(chrom):
     return os.path.join(
@@ -75,6 +77,41 @@ checkpoint merged_metadata:
         dump_file(merged_metadata, output[0])
 
 
+checkpoint supermerged:
+    input:
+        "unified/metadata.pkl",
+    output:
+        "unified/super_merged_metadata.pkl",
+    localrule: True
+    run:
+        metadata = load_file(input[0])
+        pop_data = {}
+        superpop_data = {}
+        for pop in metadata["populations"]:
+            d = pop.metadata
+            label = d.get("region") or d.get("super_population")
+            if label in ("AFR", "AFRICA"):
+                label = "Africa"
+            if label in ("Europe", "EUR", "WestEurasia", "EUROPE", "MIDDLE_EAST"):
+                label = "Europe-Middle East"
+            if label in ("EAS", "EastAsia", "EAST_ASIA"):
+                label = "East Asia"
+            if label == "OCEANIA":
+                label = "Oceania"
+            if label in ("America", "AMERICA", "AMR"):
+                label = "America"
+            if label in ("SAS", "SouthAsia", "CENTRAL_SOUTH_ASIA", "CentralAsiaSiberia"):
+                label = "Central-South Asia"
+            if label in ("Max Planck", "Afanasievo"):
+                label = "Ancient"
+            superpop_data.setdefault(label, [])
+            inds = np.flatnonzero(metadata["individual_populations"] == pop.id)
+            nodes = [tuple(metadata['individuals'][i].nodes) for i in inds]
+            superpop_data[label].extend(nodes)
+            # pop_data[pop.id] = dict(name=d["name"], label=label)
+        dump_file(superpop_data, output[0])
+
+
 def subsample_unified(chrom_path, nodes):
     ts = tszip.decompress(chrom_path)
     nodes_flat = np.reshape(nodes, -1)
@@ -94,30 +131,49 @@ def subsample_unified(chrom_path, nodes):
 rule unified_subsample:
     input:
         "unified/merged_metadata.pkl",
+        "unified/super_merged_metadata.pkl",
     output:
-        multiext("unified/{population}/chr{chrom}", ".tsz", ".node_map.pkl"),
+        "unified/{population}/chr{chrom}.pkl"
     resources:
         mem_mb=12000,
-        runtime=5,
+        runtime=60,
     run:
         metadata = load_file(input[0])
-        nodes = unified_nodes_for_pop(wildcards.population, metadata)
+        super_metadata = load_file(input[1])
+        if wildcards.population.startswith("super/"):
+            label = wildcards.population[len("super/") :]
+            nodes = super_metadata[label]
+        else:
+            nodes = unified_nodes_for_pop(wildcards.population, metadata)
         chrom_path = path_for_unified_chrom(wildcards.chrom)
         new_ts, node_map = subsample_unified(chrom_path, nodes)
-        tszip.compress(new_ts, output[0])
-        dump_file(node_map, output[1])
+        nodes = [tuple(i.nodes) for i in new_ts.individuals()]
+        c = phlash.contig(new_ts, nodes)
+        d = c.get_data(100)
+        rc = RawContig(**d, window_size=100)   
+        dump_file(rc, output[0])
 
 
 rule config_for_phlash:
     input:
-        expand("unified/{{population}}/chr{chrom}.tsz", chrom=unified_chroms()),
+        chroms=expand("unified/{{population}}/chr{chrom}.pkl", chrom=unified_chroms()),
+        merged_metadata="unified/merged_metadata.pkl",
+        super_metadata="unified/super_merged_metadata.pkl"
     output:
         "unified/{population}/phlash/config.pkl",
     localrule: True
     run:
+        if wildcards.population.startswith("super/"):
+            label = wildcards.population[len("super/") :]
+            orig_nodes = load_file(input.super_metadata)[label]
+            nodes = list(map(tuple, np.arange(2 * len(orig_nodes)).reshape(-1, 2)))
+        else:
+            orig_nodes = unified_nodes_for_pop(wildcards.population, load_file(input.merged_metadata))
+            nodes = np.arange(2 * len(orig_nodes)).reshape(-1, 2)
+            nodes = list(map(tuple, nodes))
         params = {}
-        params["test_data"] = (input[0], None)
-        params["train_data"] = [(x, None) for x in input[1:]]
+        params["test_data"] = (input.chroms[0], nodes)
+        params["train_data"] = [(c, nodes) for c in input.chroms[1:]]
         params["mutation_rate"] = config["human_mutation_rate"]
         dump_file(params, output[0])
 
@@ -136,4 +192,41 @@ rule unified_all:
         "figures/unified/plot.pdf",
 
 
-ALL_OUTPUT.extend(rules.unified_all.output)
+def input_for_unified_merged(wc):
+    super_metadata = load_file(checkpoints.supermerged.get().output[0])
+    return {
+        label: f"unified/super/{label}/phlash/estimates.pkl" for label in super_metadata
+    }
+
+
+rule unified_merged:
+    input:
+        unpack(input_for_unified_merged),
+    output:
+        "figures/unified/merged.pdf",
+    localrule: True
+    run:
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(dpi=300)
+        T = np.geomspace(1e1, 1e6, 1000)
+        for label in input.keys():
+            dms = load_file(input[label])
+            Nes = [
+                d.rescale(config["human_mutation_rate"]).eta(T, Ne=True) for d in dms
+            ]
+            Ne = np.median(Nes, 0)
+            ax.plot(T, Ne, label=label)
+        for d in ["top", "right"]:
+            ax.spines[d].set_visible(False)
+        ax.legend()
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel("Time (generations)")
+        ax.set_ylabel("$N_e(t)$")
+        fig.tight_layout()
+        fig.savefig(output[0])
+
+
+# ALL_OUTPUT.extend(rules.unified_all.output)
+ALL_OUTPUT.extend(rules.unified_merged.output)

@@ -1,7 +1,73 @@
+import jax
+
+from phlash.hmm import psmc_ll
+from phlash.data import VcfContig, Contig
+from phlash.size_history import DemographicModel, SizeHistory
+from phlash.params import PSMCParams
+
+INDEP_CONFIG = {
+    'overlaps': [0, 100, 200, 500, 1000]
+}
+
+def eval_overlap(c: Contig, overlap: int) -> float:
+    H = c.get_data(100)['het_matrix'].clip(0, 1)
+    # calculate chunk size: 1/5th of chrom
+    chunk_size = int(.2 * H.shape[1])
+    theta = H.mean()
+    dm = DemographicModel.default(pattern='16*1', theta=theta)
+    alpha, ll = psmc_ll(dm, H[0])
+    chunks = c.to_chunked(window_size=100, overlap=overlap, chunk_size=chunk_size).chunks
+    warmup_chunks, data_chunks = np.split(chunks[1:], [overlap], axis=1)
+    pp = PSMCParams.from_dm(dm)
+    # the first chunk overlaps into the second chunk, so we don't want to double count
+    a0, ll0 = psmc_ll(dm, chunks[0])
+    # the handle the rest of the chunks
+    pis = jax.vmap(lambda pp, d: psmc_ll(pp, d)[0], (None, 0))(pp, warmup_chunks)  # (I, M)
+    pps = jax.vmap(lambda pi: pp._replace(pi=pi))(pis)
+    _, ll1 = jax.vmap(psmc_ll, (0, 0))(pps, data_chunks)
+    ll_par = ll0+ll1.sum()
+    re = abs((ll_par - ll) / ll)
+    return float(re)
+
+def input_for_indep_contig(wc):
+    i = int(wc.i)
+    species, _, _ = H2H_PARAMS['models'][i]
+    chroms = get_chroms(species)
+    chrom_id = next(chroms)
+    return f"h2h/model{i}/rep0/simulations/chr{chrom_id}.bcf"
+
+rule indep_contig:
+    input:
+        input_for_indep_contig,
+    output:
+        r"indep/model{i}/contig.pkl",
+    run:
+        c = VcfContig(input[0], samples=["sample0"], contig=None, interval=None, _allow_empty_region=True)
+	rc = c.to_raw(100)
+	dump_file(rc, output[0])
+
+rule indep_compute_ll:
+    input:
+        "indep/model{i}/contig.pkl"
+    output:
+        r"indep/model{i}/res_{overlap,\d+}.pkl"
+    run:
+        rc = load_file(input[0])
+	overlap = int(wildcards.overlap)
+        rel_err = eval_overlap(rc, overlap)
+	d = dict(rel_err=rel_err, overlap=overlap)
+	dump_file(d, output[0])
+
+def input_for_independence_plot(wc):
+    return expand('indep/model{i}/res_{overlap}.pkl',
+        i=range(len(H2H_PARAMS['models'])),
+	overlap=INDEP_CONFIG['overlaps'])
+
 rule plot_independence:
     # piggyback of all the other simulations we already ran
     input:
-        expand("h2h/model{i}/rep0/simulations/chr1.bcf", i=range(len(H2H_PARAMS['models'])))
+        input_for_independence_plot
+    localrule: True
     output:
         'figures/independence/plot.pdf'
     script:

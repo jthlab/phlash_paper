@@ -16,9 +16,6 @@
 # +
 # flake8: noqa
 # %load_ext nb_black
-from IPython.display import set_matplotlib_formats
-
-set_matplotlib_formats("svg")
 import numpy as np
 
 rng = np.random.default_rng(1)
@@ -96,9 +93,9 @@ for k in ratios:
 
 # +
 import matplotlib as mpl
-
 import matplotlib.pyplot as plt
 
+plt.set_cmap("Set1")
 
 def despine(ax):
     for d in ("top", "right"):
@@ -109,7 +106,7 @@ import matplotlib.gridspec as gridspec
 
 # Create a grid with 2 rows and 2 columns,
 # but the second column is twice as wide as the first one
-fig = plt.figure(figsize=(10, 6))
+fig = plt.figure(figsize=(10, 4), dpi=300)
 gs = gridspec.GridSpec(1, 3, width_ratios=[2, 2, 1])
 
 # Subplots
@@ -158,6 +155,13 @@ ax1.set_ylabel("")
 ax3.set_ylabel("")
 ax3.yaxis.set_visible(False)
 ax3.spines["left"].set_visible(False)
+
+import matplotlib.transforms as mtransforms
+for label, ax in zip('abc', [ax2, ax1, ax3]):
+# label physical distance in and down:
+    trans = mtransforms.ScaledTranslation(10/72, -5/72, fig.dpi_scale_trans)
+    ax.text(0.0, 1.0, "(" + label + ")", transform=ax.transAxes + trans,
+        fontsize='medium', verticalalignment='top', fontfamily='serif',)
 fig.suptitle("YRI-CHB divergence time estimation")
 fig.tight_layout()
 fig.savefig(output)

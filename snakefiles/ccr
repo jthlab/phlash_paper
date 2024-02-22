@@ -13,8 +13,11 @@ rule ccr_sim_params:
     localrule: True
     run:
         metadata = load_file(input[0])
+        # the OOA model uses the 1kg naming codes
+        d = {"Yoruba": "YRI", "Han": "CHB"}
         pop_dict = {
-            pop: len(unified_nodes_for_pop(pop, metadata)) for pop in ["Yoruba", "Han"]
+            d[pop]: len(unified_nodes_for_pop(pop, metadata))
+            for pop in ["Yoruba", "Han"]
         }
         params = {
             "species": "HomSap",
@@ -105,7 +108,7 @@ rule ccr_phlash_simulated_config:
         ret = {}
         ret["test_data"] = pairs[0]
         ret["train_data"] = pairs[1:]
-        ret["mutation_rate"] = 1.29e-8
+        ret["mutation_rate"] = config["human_mutation_rate"]
         dump_file(ret, output[0])
 
 
@@ -121,6 +124,7 @@ rule plot_ccr:
         ),
     output:
         "figures/ccr/plot.pdf",
+    localrule: True
     script:
         "../notebooks/ccr.py"
 

@@ -14,7 +14,7 @@ def load_file(path):
         decoder = json
         mode = "t"
     else:
-        assert path.endswith("pkl")
+        assert path.endswith("pkl"), path
         decoder = pickle
         mode = "b"
     with open(path, f"r{mode}") as f:
@@ -59,7 +59,9 @@ for mod in [
     "bottleneck",
     "composite",
     "fitcoal",
-    "msmc2"
+    "msmc2",
+    "independence",
+    "adna",
 ]:
 
     include: f"snakefiles/{mod}"

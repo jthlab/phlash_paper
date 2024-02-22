@@ -1,4 +1,5 @@
 import tszip
+import tskit
 import numpy as np
 
 from phlash.data import RawContig
@@ -58,9 +59,9 @@ def filtered_het_matrix(chrom_path, window_size):
         ell = int(v.position / w)
         g = v.genotypes[ancient_nodes]
         het_matrix[:, ell] += g[:, 0] != g[:, 1]
-    sample_sets = [a.tolist() for a in ancient_samples_d.values()]
-    afss = ts.allele_frequency_spectrum(
-        sample_sets=sample_sets, span_normalise=False, polarized=True
+    sample_sets = [a.reshape(-1).tolist() for a in ancient_samples_d.values()]
+    afss = chrom.allele_frequency_spectrum(
+        sample_sets=sample_sets, span_normalise=False, polarised=True
     )
     ret = {
         pop: {"het_matrix": H, "afs": a}
@@ -71,17 +72,33 @@ def filtered_het_matrix(chrom_path, window_size):
     return ret
 
 
+rule adna_config_for_phlash_unified:
+    input:
+        expand("unified/{{population}}/chr{chrom}.pkl", chrom=unified_chroms()),
+    output:
+        "adna/{population}/unfiltered/phlash/config.pkl",
+    run:
+        params = {
+            "test_data": (input[0], None),
+            "train_data": [(i, None) for i in input[1:]],
+            "mutation_rate": config["human_mutation_rate"],
+            "fold_afs": False,
+        }
+        dump_file(params, output[0])
+
+
 rule adna_config_for_phlash:
     input:
-        expand("adna/{{pop}}/chr{chrom}.filtered.pkl", chrom=unified_chroms()),
+        expand("adna/{{population}}/chr{chrom}.filtered.pkl", chrom=unified_chroms()),
     output:
-        "adna/{pop}/phlash/config.pkl",
+        "adna/{population}/filtered/phlash/config.pkl",
     localrule: True
     run:
         params = {
-            "test_data": input[0],
-            "train_data": input[1:],
+            "test_data": (input[0], None),
+            "train_data": [(i, None) for i in input[1:]],
             "mutation_rate": config["human_mutation_rate"],
+            "fold_afs": False,
         }
         dump_file(params, output)
 
@@ -89,24 +106,30 @@ rule adna_config_for_phlash:
 rule adna_unified_filtered:
     output:
         **{
-            pop: f"adna/{pop}/chr{{chrom}}.filtered.pkl"
-            for pop in ADNA_CONFIG["ancient_samples"]
+            population: f"adna/{population}/chr{{chrom}}.filtered.pkl"
+            for population in ADNA_CONFIG["ancient_samples"]
         },
+    resources:
+        mem_mb=16000,
     run:
-        chrom_path = get_unified_chrom_path(chrom)
-        _, rets = filtered_het_matrix(chrom_path, 100)
-        for pop, d in rets.items():
-            rc = RawContig(het_matrix=d["het_matrix"], afs=d["afs"], window_size=100)
+        chrom_path = path_for_unified_chrom(wildcards.chrom)
+        fhm_d = filtered_het_matrix(chrom_path, 100)
+        for pop, d in fhm_d.items():
+            rc = RawContig(**d, window_size=100)
             outpath = output[pop]
             dump_file(rc, outpath)
 
 
-rule adna_figure:
+rule plot_adna:
     input:
-        **{
-            pop: f"adna/{pop}/phlash/estimates.pkl"
-            for pop in ADNA_CONFIG["ancient_samples"]
-        },
+        filtered=expand(
+            "adna/{population}/filtered/phlash/estimates.pkl",
+            population=ADNA_CONFIG["ancient_samples"],
+        ),
+        unfiltered=expand(
+            "adna/{population}/unfiltered/phlash/estimates.pkl",
+            population=ADNA_CONFIG["ancient_samples"],
+        ),
     output:
         "figures/adna/plot.pdf",
     script:

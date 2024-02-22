@@ -4,7 +4,7 @@ chrom=$1
 infile=$2
 outfile=$3
 
-L=$(head -n1 "$infile" | grep -oP '\-r \d+ \d+' | cut -f3 -d' ')
+L=$(head -n1 "$infile" | grep -oP '\-r \d+(\.\d+)? \d+' | cut -f3 -d' ')
 
 
 ################################
@@ -18,7 +18,7 @@ BEGIN {
 NR == 1 {
   print "##fileformat=VCFv4.0"
   print "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">"
-  printf "##contig=<ID=%s,length=%d>\n", chrom, L
+  printf "##contig=<ID=%s,length=%d>\n", chrom, int(L + 1)
   num_samples = (NF - 2) / 2
   printf "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT"
   header = ""
@@ -35,7 +35,7 @@ NR == 1 {
     next
   }
   last_pos = pos
-  printf "1\t%s\t.\tA\tT\t.\t.\t.\tGT", pos
+  printf "%s\t%s\t.\tA\tT\t.\t.\t.\tGT", chrom, pos
   for (i = 3; i <= NF; i+=2) {
     printf "\t%s|%s", $i, $(i+1)
   }
@@ -46,4 +46,4 @@ EOF
 # End of AWK Scripts           #
 ################################
 
-tail -n+6 "$infile" | awk -v chrom=${chrom} -v L=${L} "$script" | bcftools view -o "$outfile"
+tail -n+6 "$infile" | head -n-1 | awk -v chrom=${chrom} -v L=${L} "$script" | bcftools view -o "$outfile"
