@@ -1,0 +1,45 @@
+def input_for_benchmark(wc):
+    return [
+        f"h2h/model{i}/rep{j}/n{n}/{method}/bench.txt"
+        for i, _ in enumerate(H2H_PARAMS['models'])
+        for j in range(H2H_PARAMS['num_replicates']) 
+        for method in H2H_PARAMS['methods']
+        for n in H2H_PARAMS['limits'].get(method, [1, 10, 100, 1000])
+    ]
+
+rule plot_benchmark:
+    input: input_for_benchmark
+    output:
+        f"{config['figures_path']}/benchmark.pdf"
+    localrule: True
+    run:
+        dfs = []
+        for f in input:
+            _, model, rep, n, method, _ = f.split("/")
+            i = int(model[-1])
+            n = int(n)
+            species, _, _ = H2H_PARAMS['models'][i]
+            L = get_genome_length(species) / 1e9
+            df = pd.read_csv(input, sep="\t")
+            df['method'] = method
+            df['n'] = n
+            df['mem_sc'] = df['max_rss'] / L
+            df['time_sc'] = df['s'] / 3600 / L
+        df = pd.concat(dfs)
+        time_df = df.groupby(['method', 'n']).agg(
+            mean_time('time_sc', 'mean'),
+            std_time=('time_sc', 'std')
+        ).reset_index()
+        mem_df = df.groupby(['method', 'n']).agg(
+            mean_mem=('mem_sc', 'mean'),
+            std_mem=('mem_sc', 'std')
+        ).reset_index()
+        fig, (ax1, ax2) = plt.subplots(figsize=(6.75, 2), dpi=300, tight_layout=True)
+        for m, lbl in H2H_PARAMS['labels'].items():
+            tdm = time_df[time_df['method'] == m]
+            ax1.plot(tdm['n'], tdm['mean_time'], label=lbl)
+            ax1.errorbar(tdm['n'], tdm['mean_time'], yerr=tdm['std_time'], fmt='-o')
+            mdm = mem_df[mem_df['method'] == m]
+            ax2.plot(mdm['n'], mdm['mean_time'], label=lbl)
+            ax2.errorbar(mdm['n'], mdm['mean_mem'], yerr=tdm['std_mem'], fmt='-o')
+        fig.savefig(output[0])

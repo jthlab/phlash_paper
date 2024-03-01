@@ -123,7 +123,7 @@ rule plot_ccr:
             population=["Yoruba", "Han", "combined"],
         ),
     output:
-        "figures/ccr/plot.pdf",
+        f"{config['figures_path']}/ccr/plot.pdf",
     localrule: True
     script:
         "../notebooks/ccr.py"

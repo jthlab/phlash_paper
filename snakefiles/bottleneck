@@ -76,7 +76,7 @@ rule plot_bneck:
         ),
         yri="unified/Yoruba/phlash/estimates.pkl",
     output:
-        "figures/bneck/plot.pdf",
+        f"{config['figures_path']}/bneck/plot.pdf",
     localrule: True
     run:
         fig, axs = plt.subplots(ncols=2, figsize=(8.5 - 2, 3), dpi=300)
@@ -175,10 +175,6 @@ rule plot_bneck:
         ax.set_xlabel(r"$\inf_{t>t_\text{anc}} N_e(t)$")
         # ax.vlines(v0, *ax.get_ylim(), label="Estimated", color="grey", linestyle="--", linewidth=.5)
         # ax.set_xscale('log')
-
-        for ax in axs:
-            for d in "top", "right":
-                ax.spines[d].set_visible(False)
 
         import matplotlib.transforms as mtransforms
         for label, ax in zip('ab', axs):

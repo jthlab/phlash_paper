@@ -1,11 +1,10 @@
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
 import pandas as pd
 import tqdm.auto as tqdm
 
 from itertools import product
 from collections import defaultdict
+import matplotlib.transforms as mtransforms
 from functools import cache
 
 import cyvcf2
@@ -52,6 +51,7 @@ H2H_PARAMS = {
 H2H_PARAMS["colors"] = dict(
     zip(H2H_PARAMS["methods"], matplotlib.colormaps["Set1"].colors)
 )
+H2H_PARAMS['labels'] = {'smcpp': r'SMC\texttt{++}', 'msmc2': 'MSMC2', 'fitcoal': 'FitCoal', 'phlash': 'phlash', }
 
 
 def get_default_mutation_rate(species_name):
@@ -87,20 +87,21 @@ def get_truth(species_name, demographic_model, population):
     true_dm = DemographicModel(eta=eta, theta=mu, rho=None)
     return true_dm
 
+
 rule h2h_N0:
     output:
-        r"h2h/model{i}/N0.pkl"
-    run: 
+        r"h2h/model{i}/N0.pkl",
+    run:
         i = int(wildcards.i)
         species_id, model_id, population = H2H_PARAMS["models"][i]
         species, model = _find_stdpopsim_model(species_id, model_id)
         N0 = _get_N0(model, {population: 2})
         dump_file(N0, output[0])
-    
+
 
 rule h2h_config_sim:
     input:
-        r"h2h/model{i}/N0.pkl"
+        r"h2h/model{i}/N0.pkl",
     output:
         r"h2h/model{i}/rep{j}/{big,(big\/)?}simulations/params.pkl",
     localrule: True
@@ -311,7 +312,7 @@ rule h2h_figure:
     input:
         unpack(input_for_h2h_figure),
     output:
-        r"figures/h2h/model{i}.n{n}.pdf",
+        f"{config['figures_path']}/h2h/model{{i}}.n{{n}}.pdf",
     localrule: True
     run:
         T = H2H_PARAMS["T"]
@@ -355,23 +356,21 @@ def input_for_h2h_figure_combined(wc):
     # we don't actually use the pdfs as input, just ensures all the other inputs are
     # available
     ret = [
-        f"figures/h2h/model{i}.n{n}.pdf"
+        f"{config['figures_path']}/h2h/model{i}.n{n}.pdf"
         for i, _ in enumerate(H2H_PARAMS["models"])
         for n in H2H_PARAMS["sample_sizes"]
     ]
-    ret.extend([
-        f"figures/h2h/model{i}.n1000.pdf"
-        for i, _ in enumerate(H2H_PARAMS["models"])
-    ])
+    ret.extend(
+        [f"{config['figures_path']}/h2h/model{{i}}.n1000.pdf" for i, _ in enumerate(H2H_PARAMS["models"])]
+    )
     return ret
-
 
 
 rule h2h_figure_combined:
     input:
         input_for_h2h_figure_combined,
     output:
-        r"figures/h2h/combined{i,\d+}.pdf",
+        f"{config['figures_path']}/h2h/combined{{i,\\d+}}.pdf",
     localrule: True
     run:
         T = H2H_PARAMS["T"]
@@ -395,16 +394,14 @@ rule h2h_figure_combined:
             sharex=True,
             sharey="row",
         )
-        for mdl, axs in zip(mdls, axss):
+        for mdl, (ax_i, axs) in zip(mdls, enumerate(axss)):
             i = models.index(mdl)
-            for n, ax in zip([1, 10, 100, 1000], axs):
+            for n, (ax_j, ax) in zip([1, 10, 100, 1000], enumerate(axs)):
                 truth = get_truth(*mdl)
                 cm = H2H_PARAMS["colors"]
                 ax.plot(T, truth.eta(T, Ne=True), color="black")
                 for method in H2H_PARAMS["methods"]:
-                    if n in H2H_PARAMS["limits"].get(
-                        method, [1, 10, 100, 1000]
-                    ):
+                    if n in H2H_PARAMS["limits"].get(method, [1, 10, 100, 1000]):
                         paths = [
                             f"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl"
                             for j in range(H2H_PARAMS["num_replicates"])
@@ -427,23 +424,31 @@ rule h2h_figure_combined:
                             else:
                                 Ne = dm.rescale(truth.theta).eta(T, Ne=True)
                             Nes.append(Ne)
+                        label = None
+                        if ax_i == 0:
+                            if ax_j == 0 and method == "smcpp":
+                                label = r"SMC\texttt{++}"
+                            elif ax_j == 1 and method == "msmc2":
+                                label = "MSMC2"
+                            elif ax_j == 2 and method == "fitcoal":
+                                label = "FitCoal"
+                            elif ax_j == 3 and method == "phlash":
+                                label = "phlash"
                         ax.plot(
                             T,
                             np.mean(Nes, 0),
-                            label=method,
+                            label=label,
                             color=cm[method],
                             alpha=0.8,
                         )
-                        if len(Nes) == 1: 
-                            assert n, method == (1000, 'phlash')
-			    q025, q975 = np.quantile(
-			        [
-			    	    d.rescale(truth.theta).eta(T, Ne=True)
-			    	    for d in dm
-			        ],
+                        ax.legend()
+                        if len(Nes) == 1:
+                            assert n, method == (1000, "phlash")
+                            q025, q975 = np.quantile(
+                                [d.rescale(truth.theta).eta(T, Ne=True) for d in dm],
                                 [0.025, 0.975],
-			        axis=0,
-			    )
+                                axis=0,
+                            )
                             ax.fill_between(T, q025, q975, color=cm[method], alpha=0.3)
                         for f in [np.max, np.min]:
                             ax.plot(
@@ -454,18 +459,17 @@ rule h2h_figure_combined:
                                 linewidth=0.5,
                                 alpha=0.8,
                             )
-                for d in ["top", "right"]:
-                    ax.spines[d].set_visible(False)
                 ax.set_xscale("log")
                 ax.set_yscale("log")
+        ax.set_xlim(1e1, 1e6)
         for i, n in enumerate([1, 10, 100, 1000]):
             axss[0, i].set_title(f"$n={n}$")
+        trans = mtransforms.ScaledTranslation(5/72, 5/72, fig.dpi_scale_trans)
         for j, mdl in enumerate(map(keyfun, mdls)):
             y, _ = axss[j, 0].get_ylim()
-            axss[j, 0].text(1e1, 1.05 * y, f"{mdl[0]}/{mdl[1]}", fontsize=8)
-        axss[0, 1].legend(ncol=2)
-        axss[1, 0].set_ylabel("$N_e(t)$")
-        axss[2, 1].set_xlabel("Time (generations ago)")
+            axss[j, 0].text(0., 0., f"{mdl[0]}/{mdl[1]}", transform=axss[j, 0].transAxes + trans, fontsize=8)
+        axss[0, 0].set_ylabel("$N_e(t)$")
+        axss[0, 0].set_xlabel("Time (generations ago)")
         fig.tight_layout()
         fig.savefig(output[0])
 
@@ -518,22 +522,35 @@ def input_for_h2h_table(wc):
                 for n in H2H_PARAMS["sample_sizes"]:
                     if n in H2H_PARAMS["limits"].get(
                         method, H2H_PARAMS["sample_sizes"]
-                    ): 
+                    ):
                         yield f"h2h/model{i}/rep{j}/n{n}/{method}/error.pkl"
         yield f"h2h/model{i}/rep0/n1000/phlash/error.pkl"
 
 
-
-rule h2h_table:
+rule h2h_table_df:
     input:
         input_for_h2h_table,
     output:
         "tables/h2h.df.pkl",
+    localrule: True
     run:
         records = list(map(load_file, input))
         df = pd.DataFrame.from_records(records)
         dump_file(df, output[0])
 
+
+rule h2h_table_k:
+    input:
+        "tables/h2h.df.pkl",
+    output:
+        f"{config['figures_path']}/../tables/table_{{metric}}.tex"
+    localrule: True
+    script:
+        "../notebooks/h2h_table.py"
+
+rule h2h_tables:
+    input:
+        expand(f"{config['figures_path']}/../tables/table_{{k}}.tex", k=['l2', 'tv1', 'tvn'])
 
 # localrule h2h_figure_combined_big:
 #     input:
@@ -542,20 +559,24 @@ rule h2h_table:
 #         r"figures/h2h/big{i,\d+}.pdf"
 
 
-ALL_OUTPUT.extend(
-    [
-        f"figures/h2h/model{i}.n{n}.pdf"
-        for i in range(len(H2H_PARAMS["models"]))
-        for n in H2H_PARAMS["sample_sizes"]
-    ]
-)
+rule plot_all_h2h_combined:
+    input:
+        [f"{config['figures_path']}/h2h/combined{i}.pdf" for i in range(4)]
 
-ALL_OUTPUT.extend(
-    [
-        f"figures/h2h/model{i}.n1000.pdf"
-        for i in range(len(H2H_PARAMS["models"]))
-    ]
-)
 
-ALL_OUTPUT.extend([f"figures/h2h/combined{i}.pdf" for i in range(4)])
+rule plot_all_h2h:
+    input:
+        [
+            f"{config['figures_path']}/h2h/model{i}.n{n}.pdf"
+            for i in range(len(H2H_PARAMS["models"]))
+            for n in H2H_PARAMS["sample_sizes"]
+        ]
+        + [
+            f"{config['figures_path']}/h2h/model{i}.n1000.pdf"
+            for i in range(len(H2H_PARAMS["models"]))
+        ]
+        + [f"{config['figures_path']}/h2h/combined{i}.pdf" for i in range(4)]
+
+
+# ALL_OUTPUT.append(rules.plot_all_h2h.input)
 ALL_OUTPUT.append("tables/h2h.df.pkl")

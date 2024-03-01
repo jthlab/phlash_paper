@@ -3,10 +3,22 @@ import pickle
 from functools import partial
 import cyvcf2
 import os
+import pandas as pd
 
 config["human_mutation_rate"] = 1.29e-8
 os.environ["SCRM_PATH"] = config["scrm_path"]
 os.environ["PSMC_PATH"] = config["psmc_path"]
+
+import matplotlib.pyplot as plt
+import matplotlib
+import matplotlib as mpl
+import scienceplots
+plt.style.use('science')
+mpl.rcParams['text.latex.preamble'] = r'''
+\usepackage{amsmath} 
+\usepackage{amssymb}
+\usepackage{times}
+'''
 
 
 def load_file(path):
@@ -62,6 +74,8 @@ for mod in [
     "msmc2",
     "independence",
     "adna",
+    "misc_plots",
+    "bench"
 ]:
 
     include: f"snakefiles/{mod}"

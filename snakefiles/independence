@@ -69,7 +69,7 @@ rule plot_independence:
         input_for_independence_plot
     localrule: True
     output:
-        'figures/independence/plot.pdf'
+        f"{config['figures_path']}/independence/plot.pdf"
     script:
         '../notebooks/independence.py'
 

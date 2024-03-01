@@ -1,6 +1,7 @@
 import tszip
 import tskit
 import numpy as np
+from collections import Counter
 
 from phlash.data import RawContig
 
@@ -42,6 +43,12 @@ def filtered_het_matrix(chrom_path, window_size):
     modern_mask = slice(None, 7508, None)
     ancient_mask = slice(7508, None, None)
     DEAM = {frozenset({"C", "T"}), frozenset({"A", "G"})}
+    sample_sets = [a.reshape(-1).tolist() for a in ancient_samples_d.values()]
+    afs_tensor = chrom.allele_frequency_spectrum(
+        sample_sets=sample_sets, span_normalise=False, polarised=True
+    )
+    K = len(ancient_samples_d)
+    afss = [afs_tensor.sum(axis=tuple([j for j in range(K) if j != i]))[1:-1] for i in range(K)]
     for v in chrom.variants(alleles=tskit.ALLELES_ACGT):
         if len(np.unique(v.genotypes)) > 2:
             # restrict to biallelic for simplicity
@@ -59,12 +66,8 @@ def filtered_het_matrix(chrom_path, window_size):
         ell = int(v.position / w)
         g = v.genotypes[ancient_nodes]
         het_matrix[:, ell] += g[:, 0] != g[:, 1]
-    sample_sets = [a.reshape(-1).tolist() for a in ancient_samples_d.values()]
-    afss = chrom.allele_frequency_spectrum(
-        sample_sets=sample_sets, span_normalise=False, polarised=True
-    )
     ret = {
-        pop: {"het_matrix": H, "afs": a}
+        pop: {"het_matrix": H.clip(-1, 1), "afs": a}
         for pop, H, a in zip(
             ancient_samples_d.keys(), np.split(het_matrix, np.arange(4, 8)), afss
         )
@@ -82,7 +85,7 @@ rule adna_config_for_phlash_unified:
             "test_data": (input[0], None),
             "train_data": [(i, None) for i in input[1:]],
             "mutation_rate": config["human_mutation_rate"],
-            "fold_afs": False,
+            "fold_afs": True,
         }
         dump_file(params, output[0])
 
@@ -98,9 +101,9 @@ rule adna_config_for_phlash:
             "test_data": (input[0], None),
             "train_data": [(i, None) for i in input[1:]],
             "mutation_rate": config["human_mutation_rate"],
-            "fold_afs": False,
+            "fold_afs": True,
         }
-        dump_file(params, output)
+        dump_file(params, output[0])
 
 
 rule adna_unified_filtered:
@@ -119,18 +122,36 @@ rule adna_unified_filtered:
             outpath = output[pop]
             dump_file(rc, outpath)
 
+rule adna_deamination:
+    input: path_for_unified_chrom("1_p")
+    output:
+        "adna/deamination.pkl"
+    run:
+        chr1p = tszip.decompress(input[0])
+        mutation_counts = Counter()
+        A = np.array(tskit.ALLELES_ACGT)
+        I = np.arange(2 * chr1p.num_individuals)
+        modern_mask = slice(None, 7508, None)
+        ancient_nodes = np.arange(7508, 7524)
+        for v in chr1p.variants(
+            samples=ancient_nodes, alleles=tskit.ALLELES_ACGT
+        ):
+            a = v.site.ancestral_state
+            adna_alleles = A[v.genotypes].reshape(-1)
+            mutation_counts.update([(a, b) for b in adna_alleles])
+        dump_file(mutation_counts, output[0])
 
 rule plot_adna:
     input:
-        filtered=expand(
-            "adna/{population}/filtered/phlash/estimates.pkl",
+        estimates=expand(
+            "adna/{population}/{un}filtered/phlash/estimates.pkl",
             population=ADNA_CONFIG["ancient_samples"],
+	    un=["", "un"],
         ),
-        unfiltered=expand(
-            "adna/{population}/unfiltered/phlash/estimates.pkl",
-            population=ADNA_CONFIG["ancient_samples"],
-        ),
+        mutation_counts="adna/deamination.pkl"
+    localrule: True
     output:
-        "figures/adna/plot.pdf",
+    	**{k: f"{config['figures_path']}/adna/{k}.pdf"
+	for k in ['main', 'combined']}
     script:
-        "notebooks/adna.py"
+        "../notebooks/adna.py"

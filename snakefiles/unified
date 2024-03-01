@@ -203,12 +203,22 @@ rule unified_merged:
     input:
         unpack(input_for_unified_merged),
     output:
-        "figures/unified/merged.pdf",
+        f"{config['figures_path']}/unified/merged.pdf",
     localrule: True
     run:
-        import matplotlib.pyplot as plt
-
-        fig, ax = plt.subplots(dpi=300)
+        # Desired canvas size
+        canvas_width, canvas_height = 6.5, 2  # in inches
+        
+        # Estimate extra space for margins - you may need to adjust these
+        left_margin = 0.1  # Fraction of figure width
+        right_margin = 0.05  # Fraction of figure width
+        bottom_margin = 0.1  # Fraction of figure height
+        top_margin = 0.1  # Fraction of figure height
+        
+        # Calculate figure size
+        figure_width = canvas_width / (1 - left_margin - right_margin)
+        figure_height = canvas_height / (1 - bottom_margin - top_margin)
+        fig, ax = plt.subplots(dpi=300, figsize=(figure_width, figure_height), tight_layout=True)
         T = np.geomspace(1e1, 1e6, 1000)
         for label in input.keys():
             dms = load_file(input[label])
@@ -217,13 +227,12 @@ rule unified_merged:
             ]
             Ne = np.median(Nes, 0)
             ax.plot(T, Ne, label=label)
-        for d in ["top", "right"]:
-            ax.spines[d].set_visible(False)
-        ax.legend()
+        ax.legend(ncols=4, loc="lower right")
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("Time (generations)")
         ax.set_ylabel("$N_e(t)$")
+        ax.set_xlim(1e1, 1e6)
         fig.tight_layout()
         fig.savefig(output[0])
 

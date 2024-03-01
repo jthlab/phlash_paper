@@ -1,0 +1,51 @@
+rule plot_l2_vs_density:
+    input:
+        expand(
+            "h2h/model5/rep{j}/n1/{method}/estimates.pkl",
+            j=range(H2H_PARAMS["num_replicates"]),
+            method=["phlash", "msmc2", "smcpp"],
+        ),
+    output:
+        f"{config['figures_path']}/l2_vs_tv.pdf"
+    localrule: True
+    run:
+        fig, (ax1, ax2) = plt.subplots(
+            ncols=2, figsize=(6.5, 2), dpi=300, tight_layout=True, sharex=False
+        )
+        T = H2H_PARAMS["T"]
+        i = 5
+        model = H2H_PARAMS["models"][i]
+        truth = get_truth(*model)
+        cm = H2H_PARAMS["colors"]
+        ax1.plot(T, truth.eta(T, Ne=True), color="black")
+        ax2.plot(T, truth.eta.density()(T), color="black")
+        for method in "phlash", "msmc2", "smcpp":
+            Nes = []
+            denss = []
+            for j in range(3):
+                path = f"h2h/model5/rep{j}/n1/{method}/estimates.pkl"
+                dm = load_file(path)
+                if method == "phlash":
+                    # list of posterior samples from dm, take posterior median as point estimate
+                    Ne = np.median(
+                        [d.rescale(truth.theta).eta(T, Ne=True) for d in dm], axis=0
+                    )
+                    dens = np.median(
+                        [d.rescale(truth.theta).eta.density()(T) for d in dm], axis=0
+                    )
+                else:
+                    Ne = dm.rescale(truth.theta).eta(T, Ne=True)
+                    dens = dm.rescale(truth.theta).eta.density()(T)
+                denss.append(dens)
+                Nes.append(Ne)
+            label = {'msmc2': 'MSMC2', 'smcpp': r"SMC\texttt{++}", 'phlash': 'phlash'}[method]
+            ax1.plot(T, np.median(Nes, 0), label=label, color=cm[method], alpha=0.8)
+            ax2.plot(T, np.median(denss, 0), label=label, color=cm[method], alpha=0.8)
+        ax2.legend()
+        ax1.set_xscale('log')
+        ax1.set_yscale('log')
+        ax1.set_ylabel("$N_e(t)$")
+        ax2.set_ylabel("Coalescent density")
+        ax1.set_xlabel("Time (generations)")
+        ax2.set_xlabel("Time (generations)")
+        fig.savefig(output[0])

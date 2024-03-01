@@ -61,7 +61,7 @@ rule phlash_estimate:
         mem_mb=_phlash_mem,
         gpus=1,
         runtime=240,
-        slurm_account=_phlash_random_account,
+        slurm_account="stats_dept1",
         slurm_partition="gpu,gpu_mig40,spgpu",
         slurm_extra="--gpus 1",
     shell:

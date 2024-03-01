@@ -7,3 +7,4 @@ config:
   - bcftools_path="/home/jonth/.local/bin/bcftools"
   - scrm_path="/home/jonth/eb_dl/paper_repo/lib/scrm/scrm"
   - psmc_path="/home/jonth/eb_dl/paper_repo/lib/psmc/psmc"
+  - figures_path="/nfs/turbo/lsa-jonth/jonth/pipeline/figures"

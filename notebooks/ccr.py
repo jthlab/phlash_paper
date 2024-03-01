@@ -95,19 +95,23 @@ for k in ratios:
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-plt.set_cmap("Set1")
+import scienceplots
+plt.style.use('science')
 
-def despine(ax):
-    for d in ("top", "right"):
-        ax.spines[d].set_visible(False)
+mpl.rcParams['text.latex.preamble'] = r'''
+\usepackage{amsmath} 
+\usepackage{amssymb}
+\usepackage{times}
+'''
+
 
 
 import matplotlib.gridspec as gridspec
 
 # Create a grid with 2 rows and 2 columns,
 # but the second column is twice as wide as the first one
-fig = plt.figure(figsize=(10, 4), dpi=300)
-gs = gridspec.GridSpec(1, 3, width_ratios=[2, 2, 1])
+fig = plt.figure(figsize=(8.5-2+1, 2), dpi=300)
+gs = gridspec.GridSpec(1, 3, width_ratios=[2, 2, 2], wspace=.25)
 
 # Subplots
 ax2 = fig.add_subplot(gs[0, 0])  # Top-left
@@ -126,12 +130,11 @@ for d, ax in zip((ccrs, ratios), (ax2, ax1)):
         ax.fill_betweenx(T, *qq, color=color, alpha=0.1)
         for q in qq:
             ax.plot(q, T, color=color, linestyle="--", linewidth=0.4)
-        despine(ax)
         ax.set_xscale("log")
         ax.set_yscale("log")
 
 
-ax2.legend(bbox_to_anchor=(1.1, 0.95))
+ax1.legend()
 import demesdraw
 import stdpopsim
 
@@ -140,30 +143,42 @@ G = (
     .get_demographic_model("OutOfAfrica_3G09")
     .model.to_demes()
 )
-demesdraw.tubes(G, ax=ax3, log_time=True, max_time=1e5)
+cmap = dict(zip(["YRI", "CEU", "CHB"], ['#0C5DA5', '#00B945', '#FF9500']))
+demesdraw.tubes(G, ax=ax3, colours=cmap, log_time=True, max_time=1e5)
 ax1.set_ylim(2e1, 1e5)
 ax1.set_xlabel("$N_1/N_2 + N_2/N_1$")
-ax1.set_title("Ratio", y=0.96)
-ax2.set_title("CCR", y=0.96)
-ax1.title.set_position((0.5, 0.97))
-ax2.title.set_position((0.6, 0.97))
+# ax1.set_title("Ratio")
+# ax2.set_title("CCR")
+# ax1.title.set_position((0.5, 0.97))
+# ax2.title.set_position((0.5, 0.97))
 for ax in ax1, ax2:
-    ax.fill_between(ax.get_xlim(), 848, 5000, color="grey", alpha=0.15)
+    ax.fill_between(ax.get_xlim(), 848, 5000, color="grey", alpha=0.15, linewidth=0)
 ax2.set_ylabel("Time (generations)")
 ax2.set_xlabel("Cross-coalescence rate")
 ax1.set_ylabel("")
 ax3.set_ylabel("")
 ax3.yaxis.set_visible(False)
+ax3.tick_params(
+    axis='x',          # changes apply to the x-axis
+    which='both',      # both major and minor ticks are affected
+    bottom=False,      # ticks along the bottom edge are off
+    top=False,         # ticks along the top edge are off
+    labelbottom=True) # labels along the bottom edge are off
 ax3.spines["left"].set_visible(False)
+ax3.spines["top"].set_visible(False)
+# pos = ax3.get_position() # Get current position
+# new_pos = [pos.x0 - .1, pos.y0, pos.width, pos.height] # Shift left by 0.05
+# ax3.set_position(new_pos) # Set new position
 
 import matplotlib.transforms as mtransforms
 for label, ax in zip('abc', [ax2, ax1, ax3]):
 # label physical distance in and down:
-    trans = mtransforms.ScaledTranslation(10/72, -5/72, fig.dpi_scale_trans)
-    ax.text(0.0, 1.0, "(" + label + ")", transform=ax.transAxes + trans,
+    x = {'a': 7/72, 'b': -20/72, 'c': 15/72}[label]
+    trans = mtransforms.ScaledTranslation(x, -5/72, fig.dpi_scale_trans)
+    ax.text(1.0 if label == 'b' else 0., 1.0, "(" + label + ")", transform=ax.transAxes + trans,
         fontsize='medium', verticalalignment='top', fontfamily='serif',)
-fig.suptitle("YRI-CHB divergence time estimation")
-fig.tight_layout()
+# fig.suptitle("YRI-CHB divergence time estimation")
+# fig.tight_layout()
 fig.savefig(output)
 # -
 
