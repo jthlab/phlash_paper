@@ -8,38 +8,70 @@ def input_for_benchmark(wc):
     ]
 
 rule plot_benchmark:
-    input: input_for_benchmark
     output:
         f"{config['figures_path']}/benchmark.pdf"
     localrule: True
     run:
+        input = input_for_benchmark(None)
         dfs = []
         for f in input:
             _, model, rep, n, method, _ = f.split("/")
-            i = int(model[-1])
-            n = int(n)
+            i = int(model[5:])
+            n = int(n[1:])
             species, _, _ = H2H_PARAMS['models'][i]
             L = get_genome_length(species) / 1e9
-            df = pd.read_csv(input, sep="\t")
+            try:
+                df = pd.read_csv(f, sep="\t")
+            except FileNotFoundError:
+                continue
             df['method'] = method
+            df['model'] = i
             df['n'] = n
-            df['mem_sc'] = df['max_rss'] / L
-            df['time_sc'] = df['s'] / 3600 / L
+            df['mem_sc'] = df['max_rss'] / L / 1024
+            df['time_sc'] = df['cpu_time'] / 60 / L
+            df['f'] = f
+            dfs.append(df)
         df = pd.concat(dfs)
+        df['n'] = df['n'].astype(str)
+        df.to_pickle(output[0][:-3] + ".pkl")
+        print(df)
         time_df = df.groupby(['method', 'n']).agg(
-            mean_time('time_sc', 'mean'),
-            std_time=('time_sc', 'std')
+            mean_time=('time_sc', 'mean'),
+            std_time=('time_sc', 'std'),
+            size_time=('time_sc', 'size')
         ).reset_index()
         mem_df = df.groupby(['method', 'n']).agg(
             mean_mem=('mem_sc', 'mean'),
-            std_mem=('mem_sc', 'std')
+            std_mem=('mem_sc', 'std'),
+            size_mem=('mem_sc', 'size')
         ).reset_index()
-        fig, (ax1, ax2) = plt.subplots(figsize=(6.75, 2), dpi=300, tight_layout=True)
-        for m, lbl in H2H_PARAMS['labels'].items():
+        print(time_df)
+        print(mem_df)
+
+        
+        fig, (ax1, ax2) = plt.subplots(figsize=(6.5, 2), ncols=2, layout="constrained")
+        for i, (m, lbl) in enumerate(H2H_PARAMS['labels'].items()):
+            if i < 2:
+                lbl1 = lbl
+                lbl2 = None
+            else:
+                lbl1 = None
+                lbl2 = lbl
             tdm = time_df[time_df['method'] == m]
-            ax1.plot(tdm['n'], tdm['mean_time'], label=lbl)
-            ax1.errorbar(tdm['n'], tdm['mean_time'], yerr=tdm['std_time'], fmt='-o')
+            # l, = ax1.plot(tdm['n'], tdm['mean_time'], label=lbl1)
+            ax1.errorbar(tdm['n'], tdm['mean_time'], yerr=tdm['std_time'] / np.sqrt(tdm['size_time']), markersize=3, label=lbl1)
             mdm = mem_df[mem_df['method'] == m]
-            ax2.plot(mdm['n'], mdm['mean_time'], label=lbl)
-            ax2.errorbar(mdm['n'], mdm['mean_mem'], yerr=tdm['std_mem'], fmt='-o')
-        fig.savefig(output[0])
+            # l, = ax2.plot(mdm['n'], mdm['mean_mem'], label=lbl2)
+            ax2.errorbar(mdm['n'], mdm['mean_mem'], yerr=mdm['std_mem'] / np.sqrt(mdm['size_mem']), markersize=3, label=lbl2)
+        ax1.legend(loc="lower right")
+        ax2.legend(loc="lower right")
+        ax1.set_yscale('log')
+        ax2.set_yscale('log')
+        ax1.set_ylabel("CPU Time (Min./Gbp)")
+        ax1.tick_params(axis='x', which='minor', bottom=False, top=False)
+        ax2.tick_params(axis='x', which='minor', bottom=False, top=False)
+        ax2.set_ylabel("Memory (Gb/Gbp)")
+        fig.supxlabel("Sample size ($n$)", fontsize="medium")
+        # ax1.set_xlabel("Sample size ($n$)")
+        # ax2.set_xlabel("Sample size ($n$)")
+        fig.savefig(output[0], bbox_inches="tight")

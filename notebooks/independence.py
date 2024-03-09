@@ -57,9 +57,7 @@ import matplotlib.pyplot as plt
 plt.set_cmap("Set1")
 
 s = (8.5 - 2) / 2
-fig, ax = plt.subplots(figsize=(s, s), dpi=300)
-for d in ["right", "top"]:
-    ax.spines[d].set_visible(False)
+fig, ax = plt.subplots(figsize=(s, s), dpi=300, layout="constrained")
 ax.boxplot(columns)
 ax.set_xticks(np.arange(1, 6), labels=OVERLAPS)
 ax.set_yscale('log')
@@ -70,6 +68,5 @@ fig.suptitle("Exponential forgetting in PSMC")
 ax.set_ylabel("Relative error of log-likelihood")
 ax.set_xlabel("Length of overlap")
 ax.grid(False)
-fig.tight_layout()
-fig.savefig(snakemake.output[0])
+fig.savefig(snakemake.output[0], bbox_inches="tight")
 # -

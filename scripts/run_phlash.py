@@ -44,11 +44,15 @@ if __name__ == "__main__":
         num_workers = None
     with ThreadPoolExecutor(num_workers) as pool:
         train_data = list(pool.map(process_chrom, conf["train_data"]))
+    N = train_data[0].N
+    m = None
+    if N > 500:
+        m = 250
     res = phlash.fit(
         data=train_data,
         test_data=test_data,
         mutation_rate=conf["mutation_rate"],
-        fold_afs=conf.get('fold_afs', True),
-        num_workers=num_workers
+        num_workers=num_workers,
+        **conf.get('options', {})
     )
     pickle.dump(res, open(sys.argv[2], "wb"))

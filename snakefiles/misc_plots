@@ -9,16 +9,16 @@ rule plot_l2_vs_density:
         f"{config['figures_path']}/l2_vs_tv.pdf"
     localrule: True
     run:
-        fig, (ax1, ax2) = plt.subplots(
-            ncols=2, figsize=(6.5, 2), dpi=300, tight_layout=True, sharex=False
+        fig, axs = _, (ax1, ax2, ax3) = plt.subplots(
+            ncols=3, figsize=(6.5, 2.5), layout="constrained", sharex=False
         )
         T = H2H_PARAMS["T"]
         i = 5
         model = H2H_PARAMS["models"][i]
         truth = get_truth(*model)
-        cm = H2H_PARAMS["colors"]
         ax1.plot(T, truth.eta(T, Ne=True), color="black")
         ax2.plot(T, truth.eta.density()(T), color="black")
+        ax3.plot(T, truth.eta.density()(T), color="black")
         for method in "phlash", "msmc2", "smcpp":
             Nes = []
             denss = []
@@ -38,14 +38,20 @@ rule plot_l2_vs_density:
                     dens = dm.rescale(truth.theta).eta.density()(T)
                 denss.append(dens)
                 Nes.append(Ne)
-            label = {'msmc2': 'MSMC2', 'smcpp': r"SMC\texttt{++}", 'phlash': 'phlash'}[method]
-            ax1.plot(T, np.median(Nes, 0), label=label, color=cm[method], alpha=0.8)
-            ax2.plot(T, np.median(denss, 0), label=label, color=cm[method], alpha=0.8)
-        ax2.legend()
+            label = {'msmc2': r'\textsc{msmc2}', 'smcpp': r"\textsc{smc}\texttt{++}", 'phlash': r'\textsc{phlash}'}[method]
+            ax1.plot(T, np.median(Nes, 0), label=label, alpha=0.8)
+            ax2.plot(T, np.median(denss, 0), label=label, alpha=0.8)
+            ax3.plot(T, np.median(denss, 0), label=label, alpha=0.8)
+        ax2.legend(loc="upper center")
         ax1.set_xscale('log')
         ax1.set_yscale('log')
+        ax2.set_xscale('log')
+        ax2.sharey(ax3)
         ax1.set_ylabel("$N_e(t)$")
         ax2.set_ylabel("Coalescent density")
-        ax1.set_xlabel("Time (generations)")
-        ax2.set_xlabel("Time (generations)")
-        fig.savefig(output[0])
+        # ax3.set_ylabel("Coalescent density")
+        trans = mtransforms.ScaledTranslation(5/72, -5/72, fig.dpi_scale_trans)
+        for ax, label in zip(axs, "abc"):
+            ax.text(0., 1.0, "(" + label + ")", transform=ax.transAxes + trans, fontsize='medium', verticalalignment='top', fontfamily='serif',)
+        fig.supxlabel("Time (generations)", fontsize="medium")
+        fig.savefig(output[0], bbox_inches="tight")

@@ -3,6 +3,7 @@ import pickle
 from functools import partial
 import cyvcf2
 import os
+import os.path
 import pandas as pd
 
 config["human_mutation_rate"] = 1.29e-8
@@ -19,6 +20,7 @@ mpl.rcParams['text.latex.preamble'] = r'''
 \usepackage{amssymb}
 \usepackage{times}
 '''
+mpl.rcParams['font.size'] = 12
 
 
 def load_file(path):

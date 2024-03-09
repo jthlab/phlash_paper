@@ -51,7 +51,7 @@ H2H_PARAMS = {
 H2H_PARAMS["colors"] = dict(
     zip(H2H_PARAMS["methods"], matplotlib.colormaps["Set1"].colors)
 )
-H2H_PARAMS['labels'] = {'smcpp': r'SMC\texttt{++}', 'msmc2': 'MSMC2', 'fitcoal': 'FitCoal', 'phlash': 'phlash', }
+H2H_PARAMS['labels'] = {'smcpp': r'\textsc{smc}\texttt{++}', 'msmc2': r'\textsc{msmc2}', 'fitcoal': r'\textsc{FitCoal}', 'phlash': r'\textsc{phlash}', }
 
 
 def get_default_mutation_rate(species_name):
@@ -352,18 +352,23 @@ rule h2h_figure:
         fig.savefig(output[0])
 
 
+def every_h2h_input_base():
+    for i, model in enumerate(H2H_PARAMS["models"]):
+        for j in range(H2H_PARAMS["num_replicates"]):
+            for method in H2H_PARAMS["methods"]:
+                for n in H2H_PARAMS["sample_sizes"]:
+                    if n in H2H_PARAMS["limits"].get(
+                        method, H2H_PARAMS["sample_sizes"]
+                    ):
+                        yield f"h2h/model{i}/rep{j}/n{n}/{method}"
+        yield f"h2h/model{i}/rep0/n1000/phlash"
+
+
 def input_for_h2h_figure_combined(wc):
     # we don't actually use the pdfs as input, just ensures all the other inputs are
     # available
-    ret = [
-        f"{config['figures_path']}/h2h/model{i}.n{n}.pdf"
-        for i, _ in enumerate(H2H_PARAMS["models"])
-        for n in H2H_PARAMS["sample_sizes"]
-    ]
-    ret.extend(
-        [f"{config['figures_path']}/h2h/model{{i}}.n1000.pdf" for i, _ in enumerate(H2H_PARAMS["models"])]
-    )
-    return ret
+    for f in every_h2h_input_base():
+        yield os.path.join(f, "estimates.pkl")
 
 
 rule h2h_figure_combined:
@@ -516,16 +521,8 @@ rule h2h_table_error_entry:
 
 
 def input_for_h2h_table(wc):
-    for i, model in enumerate(H2H_PARAMS["models"]):
-        for j in range(H2H_PARAMS["num_replicates"]):
-            for method in H2H_PARAMS["methods"]:
-                for n in H2H_PARAMS["sample_sizes"]:
-                    if n in H2H_PARAMS["limits"].get(
-                        method, H2H_PARAMS["sample_sizes"]
-                    ):
-                        yield f"h2h/model{i}/rep{j}/n{n}/{method}/error.pkl"
-        yield f"h2h/model{i}/rep0/n1000/phlash/error.pkl"
-
+    for f in every_h2h_input_base():
+        yield os.path.join(f, "error.pkl")
 
 rule h2h_table_df:
     input:

@@ -81,13 +81,14 @@ def f(x):
             if v > 1:
                 v /= 1e8
             s = f"{v:.3g}"
+            if "e" in s:  # scientific notation was chosen
+                s = f"{v:.5f}"
             b = min_df.loc[(model, n, metric, stat)][method]
             if b:
-                s = '$\\mathbf{' + s + '}' 
+                s = r'\mathbf{' + s + '}'
                 if t_df.loc[k + x.name]:
                     s += "^*"
-                s += "$"
-            ret.append(s)
+            ret.append("$" + s + "$")
     return pd.Series(ret, index=x.index)
 
 s3 = s2.apply(f)
@@ -98,7 +99,7 @@ s3.index = s3.index.set_levels([[r"\texttt{" + x + "}" for x in level] for level
 s3 = s3.stack(level="stat")
 s3.index = s3.index.droplevel(-1).set_names(['Model', '$n$'])
 
-s3 = s3.rename(columns={'smcpp': r"SMC\texttt{{++}}", 'msmc2': 'MSMC2', 'fitcoal': 'FitCoal'})
+s3 = s3.rename(columns={'phlash': r'\textsc{phlash}', 'smcpp': r"\textsc{SMC}\texttt{{++}}", 'msmc2': r'\textsc{MSMC2}', 'fitcoal': r'\textsc{FitCoal}'})
 
 
 import subprocess
@@ -109,7 +110,7 @@ s4.columns.name = None
 cap = f"Performance comparison for {err} error."
 if err == "l2":
     cap += " (Errors have been divided by $10^8$.)"
-latex_str = s4.style.to_latex(hrules=True, clines="skip-last;data", caption=cap)
+latex_str = s4.style.to_latex(hrules=True, clines="skip-last;data", environment="footnotesize")
 with open(snakemake.output[0], "wt") as f:
     f.write(latex_str)
 latex_document = f"""
@@ -123,7 +124,7 @@ latex_document = f"""
 """
 # td = tempfile.TemporaryDirectory()
 # p = td.name + f"/table_{k}.tex"
-p = snakemake.output[0][:-3] + ".full.tex"
+p = snakemake.output[0][:-3] + "full.tex"
 with open(p, "wt") as f:
     f.write(latex_document)
 # subprocess.run(["pdflatex", p])

@@ -1,7 +1,7 @@
 slurm: True
 default-resources:
   - mem_mb=4000
-  - slurm_account=jonth0
+  - slurm_account=stats_dept1
   - slurm_partition=standard
   - runtime=60
 max-jobs-per-second: 10

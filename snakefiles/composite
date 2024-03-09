@@ -4,113 +4,141 @@ import numpy as np
 import tszip
 import os
 from collections import Counter
+import scipy
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 import phlash.plot
 from phlash.data import RawContig, TreeSequenceContig
 
-def gappy_afs(ts, spacing, window_size):
+COMPOSITE_PARAMS = {
+    'populations': ["Yoruba", "Han", "Utah", "Tuscan", "Iberian", "Finnish"]
+}
+
+wildcard_constraints:
+    chrom=r"\d{1,2}_[pq]"
+
+def gappy_afs(ts, nodes, spacing, window_size):
     assert spacing > window_size  # >>, in fact
     L = int(ts.sequence_length)
     regions = np.arange(0, L, spacing)
     windows = np.stack([regions, regions + window_size], axis=1).reshape(-1)
     windows = np.append(windows, L)
-    afss = ts.allele_frequency_spectrum(windows=windows, span_normalise=False, polarised=True)
+    sample_sets = np.array(nodes).reshape(1, -1).tolist()
+    afss = ts.allele_frequency_spectrum(windows=windows, sample_sets=sample_sets, span_normalise=False, polarised=True)
     # regions = [0, window_size, spacing, spacing + window_size, ...]
     # so the even-numbered regions contain the regions; everything else is the complement
     # the last region is [k * spacing + window_size, L] which must also be dropped
-    region_afss = afss[:-1:2]  
+    region_afss = afss[:-1:2]
     return np.sum(region_afss, axis=0)[1:-1].astype(int)
-
-rule composite_config_for_unified:
-    input:
-        'unified/merged_metadata.pkl'
-    output:
-        dynamic('composite/pop{i}/unified/params.pkl')
-    run:
-        metadata = load_file(input[0])
-        pop_sizes = Counter()
-        for i, pop in enumerate(metadata['populations']):
-            pop_sizes[pop] = len(unified_nodes_for_popid(i, metadata))
-        top10 = pop_sizes.most_common(10)
-        for pop in top10:
-            i = list(metadata['populations']).index(pop)
-            nodes = unified_nodes_for_popid(i, metadata)
-            dump_file({'nodes': {i: nodes}}, output[0].format(i=i))
 
 rule composite_gafs:
     input:
-        'composite/pop{i}/unified/chr{chrom}.tsz'
+        'unified/merged_metadata.pkl'
     output:
-        'composite/pop{i}/unified/chr{chrom}.gafs.txt'
+        'composite/{population}/chr{chrom}.gafs.pkl'
     run:
-        ts = tszip.decompress(input[0])
-        gafs = gappy_afs(ts, 25_000, 100)
-        with open(output[0], 'wt') as f:
-            f.write(" ".join(map(str, gafs)))
+        metadata = load_file(input[0])
+        tsz = path_for_unified_chrom(wildcards.chrom)
+        ts = tszip.decompress(tsz)
+        nodes = unified_nodes_for_pop(wildcards.population, metadata)
+        gafs = gappy_afs(ts, nodes, 10_000, 100)
+        rc = RawContig(het_matrix=None, afs=gafs, window_size=100)
+        with open(output[0], 'wb') as f:
+            pickle.dump(rc, f)
+
+rule phlash_raw_contig:
+    input:
+        'unified/{population}/chr{chrom}.pkl'
+    output:
+        'composite/{population}/chr{chrom}.pkl'
+    localrule: True
+    run:
+        c = load_file(input[0])
+        cc = RawContig(
+            het_matrix=c.het_matrix[:1],
+            afs=None,
+            window_size=c.window_size
+        )
+        dump_file(cc, output[0])
 
 
-def input_for_composite_phlash_estimate(wc):
-    i = int(wc.i)
-    template = dynamic(f'composite/pop{i}/unified/chr')
+def input_for_composite_phlash_config(wc):
+    pop = wc.population
     # use chr1-8 for sequence and, rest for afs
-    ret = dict(tsz=[], afs=[])
+    ret = dict(seq=[], afs=[])
     citer = unified_chroms()
-    ret['test'] = next(citer)
+    ret['test_data'] = f'unified/{pop}/chr1_p.pkl'
     for chrom in citer:
-        cnum = int(chrom[:-2])
-        t = template + chrom + ".tsz"
+        if chrom == "1_p": continue
+        cnum = int(chrom[:-2])  # X(_[pq])
         if cnum <= 8:
-            ret['tsz'].append(t)
+            ret['seq'].append(f'composite/{pop}/chr{chrom}.pkl')
         else:
-            ret['afs'].append(t)
+            ret['afs'].append(f'composite/{pop}/chr{chrom}.gafs.pkl')
     return ret
 
-rule composite_phlash_estimate:
+rule composite_phlash_config:
     input:
-        unpack(input_for_composite_phlash_estimate)
+        unpack(input_for_composite_phlash_config)
     output:
-        # do not prepend phlash/ to avoid rule conflict
-        dynamic("composite/pop{i}/estimates.pkl")
-    resources:
-        gpus=1,
-        slurm_partition="spgpu",
-        slurm_extra="--gpus 1",
+        "composite/{population}/phlash/config.pkl"
     run:
-        contigs = []
-        test_contig = phlash.contig(input.test)
-        for tsz in input.tsz:
-            tsc = phlash.contig(tsz, samples=[(0, 1)])
-            data = tsc.get_data(100)
-            contigs.append(RawContig(het_matrix=data['het_matrix'], afs=None, window_size=100))
-        for tsz in input.afs:
-            ts = tszip.decompress(tsz)
-            afs = gappy_afs(ts, 10_000, 100)
-            contigs.append(RawContig(het_matrix=None, afs=afs, window_size=100))
-        res = phlash.fit(contigs, test_data=test_contig, mutation_rate=config['human_mutation_rate'])
-        dump_file(res, output[0])
+        params = {}
+        params['test_data'] = (input.test_data, None)
+        params['train_data'] = []
+        for pkl in input.seq + input.afs:
+            params['train_data'].append((pkl, None))
+        params['mutation_rate'] = config['human_mutation_rate']
+	params["options"] = {"N0": 1e4}
+        dump_file(params, output[0])
 
 rule plot_composite_i:
     input:
-        cl=dynamic("unified/pop{i}/phlash/estimates.pkl"),
-        indep=dynamic("composite/pop{i}/estimates.pkl")
+        cl="unified/{population}/phlash/estimates.pkl",
+        indep="composite/{population}/phlash/estimates.pkl"
     output:
-        dynamic("figures/composite/plot.pop{i}.pdf")
+        f"{config['figures_path']}/composite/{{population}}/plot.pdf"
+    localrule: True
     run:
         os.environ['CUDA_VISIBLE_GPUS'] = ""
         dms = {k: load_file(v) for k, v in input.items()}
         fig, ax = plt.subplots()
-        phlash.plot.plot_posterior(dms['indep'], ax, label="True lik.", t1=1e2, tM=1e5)
-        phlash.plot.plot_posterior(dms['cl'], ax, label="Composite lik.", t1=1e2, tM=1e5)
+        phlash.plot.plot_posterior(dms['indep'], ax)
+        phlash.plot.plot_posterior(dms['cl'], ax)
         ax.set_xlabel("Generations")
         ax.set_ylabel("$N_e$")
-        fig.tight_layout()
+        ax.set_xscale('log')
+        ax.set_yscale('log')
         fig.savefig(output[0])
-        
+
+rule plot_earthmover:
+    input:
+        cl=expand("unified/{population}/phlash/estimates.pkl", population=COMPOSITE_PARAMS['populations']),
+        indep=expand("composite/{population}/phlash/estimates.pkl", population=COMPOSITE_PARAMS['populations'])
+    output:
+        f"{config['figures_path']}/composite/earthmover.pdf"
+    localrule: True
+    run:
+        os.environ['CUDA_VISIBLE_GPUS'] = ""
+        fig, ax = plt.subplots()
+        for cl_p, indep_p in zip(input.cl, input.indep):
+            pop = cl_p.split("/")[1]
+            cl_p = load_file(cl_p)
+            indep_p = load_file(indep_p)
+            Ne_cl, Ne_indep = np.array([[d.eta(T, Ne=True) for d in x] for x in [cl_p, indep_p]])
+            W = [scipy.stats.wasserstein_distance(c, i) for c, i in zip(Ne_cl.T, Ne_indep.T)]
+            ax.plot(T, W, label=pop)
+        ax.set_xlabel("Generations")
+        ax.set_ylabel("$W$")
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        fig.savefig(output[0])
+
 
 rule plot_composite:
     input:
-        dynamic("figures/composite/plot.pop{i}.pdf")
+        expand(f"{config['figures_path']}/composite/{{pop}}/plot.pdf", pop=COMPOSITE_PARAMS['populations'])
 
-# ALL_OUTPUT.extend(rules.plot_composite.input)
+
+# ALL_OUTPUT.extend()

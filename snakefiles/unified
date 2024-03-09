@@ -10,6 +10,7 @@ import re
 import phlash
 from phlash.data import RawContig
 
+
 def path_for_unified_chrom(chrom):
     return os.path.join(
         config["unified_path"],
@@ -100,13 +101,18 @@ checkpoint supermerged:
                 label = "Oceania"
             if label in ("America", "AMERICA", "AMR"):
                 label = "America"
-            if label in ("SAS", "SouthAsia", "CENTRAL_SOUTH_ASIA", "CentralAsiaSiberia"):
+            if label in (
+                "SAS",
+                    "SouthAsia",
+                    "CENTRAL_SOUTH_ASIA",
+                    "CentralAsiaSiberia",
+                ):
                 label = "Central-South Asia"
             if label in ("Max Planck", "Afanasievo"):
                 label = "Ancient"
             superpop_data.setdefault(label, [])
             inds = np.flatnonzero(metadata["individual_populations"] == pop.id)
-            nodes = [tuple(metadata['individuals'][i].nodes) for i in inds]
+            nodes = [tuple(metadata["individuals"][i].nodes) for i in inds]
             superpop_data[label].extend(nodes)
             # pop_data[pop.id] = dict(name=d["name"], label=label)
         dump_file(superpop_data, output[0])
@@ -133,7 +139,7 @@ rule unified_subsample:
         "unified/merged_metadata.pkl",
         "unified/super_merged_metadata.pkl",
     output:
-        "unified/{population}/chr{chrom}.pkl"
+        "unified/{population}/chr{chrom}.pkl",
     resources:
         mem_mb=12000,
         runtime=60,
@@ -150,15 +156,15 @@ rule unified_subsample:
         nodes = [tuple(i.nodes) for i in new_ts.individuals()]
         c = phlash.contig(new_ts, nodes)
         d = c.get_data(100)
-        rc = RawContig(**d, window_size=100)   
+        rc = RawContig(**d, window_size=100)
         dump_file(rc, output[0])
 
 
-rule config_for_phlash:
+rule unified_config_for_phlash:
     input:
         chroms=expand("unified/{{population}}/chr{chrom}.pkl", chrom=unified_chroms()),
         merged_metadata="unified/merged_metadata.pkl",
-        super_metadata="unified/super_merged_metadata.pkl"
+        super_metadata="unified/super_merged_metadata.pkl",
     output:
         "unified/{population}/phlash/config.pkl",
     localrule: True
@@ -168,13 +174,16 @@ rule config_for_phlash:
             orig_nodes = load_file(input.super_metadata)[label]
             nodes = list(map(tuple, np.arange(2 * len(orig_nodes)).reshape(-1, 2)))
         else:
-            orig_nodes = unified_nodes_for_pop(wildcards.population, load_file(input.merged_metadata))
+            orig_nodes = unified_nodes_for_pop(
+                wildcards.population, load_file(input.merged_metadata)
+            )
             nodes = np.arange(2 * len(orig_nodes)).reshape(-1, 2)
             nodes = list(map(tuple, nodes))
         params = {}
         params["test_data"] = (input.chroms[0], nodes)
         params["train_data"] = [(c, nodes) for c in input.chroms[1:]]
         params["mutation_rate"] = config["human_mutation_rate"]
+        params["options"] = {"N0": 1e4}
         dump_file(params, output[0])
 
 
@@ -208,17 +217,19 @@ rule unified_merged:
     run:
         # Desired canvas size
         canvas_width, canvas_height = 6.5, 2  # in inches
-        
+
         # Estimate extra space for margins - you may need to adjust these
         left_margin = 0.1  # Fraction of figure width
         right_margin = 0.05  # Fraction of figure width
         bottom_margin = 0.1  # Fraction of figure height
         top_margin = 0.1  # Fraction of figure height
-        
+
         # Calculate figure size
         figure_width = canvas_width / (1 - left_margin - right_margin)
         figure_height = canvas_height / (1 - bottom_margin - top_margin)
-        fig, ax = plt.subplots(dpi=300, figsize=(figure_width, figure_height), tight_layout=True)
+        fig, ax = plt.subplots(
+            dpi=300, figsize=(figure_width, figure_height), tight_layout=True
+        )
         T = np.geomspace(1e1, 1e6, 1000)
         for label in input.keys():
             dms = load_file(input[label])
