@@ -203,50 +203,59 @@ rule unified_all:
 
 def input_for_unified_merged(wc):
     super_metadata = load_file(checkpoints.supermerged.get().output[0])
-    return {
+    ret = {
         label: f"unified/super/{label}/phlash/estimates.pkl" for label in super_metadata
     }
+    ret.update({
+        label: f"unified/{label}/phlash/estimates.pkl" for label in ["Yoruba", "Papuan", "Han"]
+})
+    return ret
 
 
-rule unified_merged:
+
+rule plot_unified_merged:
     input:
         unpack(input_for_unified_merged),
     output:
         f"{config['figures_path']}/unified/merged.pdf",
     localrule: True
     run:
-        # Desired canvas size
-        canvas_width, canvas_height = 6.5, 2  # in inches
-
-        # Estimate extra space for margins - you may need to adjust these
-        left_margin = 0.1  # Fraction of figure width
-        right_margin = 0.05  # Fraction of figure width
-        bottom_margin = 0.1  # Fraction of figure height
-        top_margin = 0.1  # Fraction of figure height
-
-        # Calculate figure size
-        figure_width = canvas_width / (1 - left_margin - right_margin)
-        figure_height = canvas_height / (1 - bottom_margin - top_margin)
-        fig, ax = plt.subplots(
-            dpi=300, figsize=(figure_width, figure_height), tight_layout=True
-        )
+        fig, axs = plt.subplots(ncols=2, sharex=True, sharey=True, layout="constrained", figsize=(6.5, 2.5))
         T = np.geomspace(1e1, 1e6, 1000)
-        for label in input.keys():
+        ax = axs[0]
+        specific = ["Han", "Yoruba", "Papuan"]
+        for label in sorted(input.keys()):
+            if label in specific: continue
             dms = load_file(input[label])
             Nes = [
                 d.rescale(config["human_mutation_rate"]).eta(T, Ne=True) for d in dms
             ]
             Ne = np.median(Nes, 0)
             ax.plot(T, Ne, label=label)
-        ax.legend(ncols=4, loc="lower right")
+        ax.legend(loc="lower right", ncols=2, fontsize=8)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("Time (generations)")
         ax.set_ylabel("$N_e(t)$")
         ax.set_xlim(1e1, 1e6)
-        fig.tight_layout()
-        fig.savefig(output[0])
+
+        ax = axs[1]
+        for k in sorted(specific):
+            dms = load_file(input[k])
+            Nes = [
+                d.rescale(config["human_mutation_rate"]).eta(T, Ne=True) for d in dms
+            ]
+            Ne, q025, q975 = np.quantile(Nes, [0.5, 0.025, 0.975], axis=0)
+            ax.plot(T, Ne, label=k)
+            ax.fill_between(T, q025, q975, alpha=0.3)
+        ax.legend()
+        ax.set_xlabel("Time (generations)")
+        import matplotlib.transforms as mtransforms
+        trans = mtransforms.ScaledTranslation(5/72, -15/72, fig.dpi_scale_trans)
+        for ax, lbl in zip(axs, "ab"):
+            ax.text(0., 1., f"({lbl})", transform=ax.transAxes + trans)
+        fig.savefig(output[0], bbox_inches="tight")
 
 
 # ALL_OUTPUT.extend(rules.unified_all.output)
-ALL_OUTPUT.extend(rules.unified_merged.output)
+# ALL_OUTPUT.extend(rules.unified_merged.output)

@@ -84,6 +84,8 @@ rule scrm_to_bcf:
         scrm_out="{analysis}/simulations/chr{chrom}.scrm_out.txt",
     output:
         "{analysis}/simulations/chr{chrom}.bcf",
+    resources:
+        runtime=10
     shell:
         f"{config['basedir']}/scripts/scrm2bcf.sh {{wildcards.chrom}} {{input.scrm_out}} {{output}}"
 

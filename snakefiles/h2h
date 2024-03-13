@@ -432,13 +432,13 @@ rule h2h_figure_combined:
                         label = None
                         if ax_i == 0:
                             if ax_j == 0 and method == "smcpp":
-                                label = r"SMC\texttt{++}"
+                                label = r"\textsc{SMC}\texttt{++}"
                             elif ax_j == 1 and method == "msmc2":
-                                label = "MSMC2"
+                                label = r"\textsc{MSMC2}"
                             elif ax_j == 2 and method == "fitcoal":
-                                label = "FitCoal"
+                                label = r"\textsc{FitCoal}"
                             elif ax_j == 3 and method == "phlash":
-                                label = "phlash"
+                                label = r"\textsc{phlash}"
                         ax.plot(
                             T,
                             np.mean(Nes, 0),
@@ -446,7 +446,7 @@ rule h2h_figure_combined:
                             color=cm[method],
                             alpha=0.8,
                         )
-                        ax.legend()
+                        ax.legend(loc="upper right")
                         if len(Nes) == 1:
                             assert n, method == (1000, "phlash")
                             q025, q975 = np.quantile(
@@ -468,13 +468,13 @@ rule h2h_figure_combined:
                 ax.set_yscale("log")
         ax.set_xlim(1e1, 1e6)
         for i, n in enumerate([1, 10, 100, 1000]):
-            axss[0, i].set_title(f"$n={n}$")
+            axss[0, i].set_title(f"$n={n}$", fontsize=12)
         trans = mtransforms.ScaledTranslation(5/72, 5/72, fig.dpi_scale_trans)
         for j, mdl in enumerate(map(keyfun, mdls)):
             y, _ = axss[j, 0].get_ylim()
-            axss[j, 0].text(0., 0., f"{mdl[0]}/{mdl[1]}", transform=axss[j, 0].transAxes + trans, fontsize=8)
-        axss[0, 0].set_ylabel("$N_e(t)$")
-        axss[0, 0].set_xlabel("Time (generations ago)")
+            axss[j, 0].text(0., 0., r"\texttt{" + f"{mdl[0]}/{mdl[1]}" + "}", transform=axss[j, 0].transAxes + trans, fontsize=8)
+        axss[-1, 0].set_ylabel("$N_e(t)$")
+        axss[-1, 0].set_xlabel("Time (generations ago)")
         fig.tight_layout()
         fig.savefig(output[0])
 
@@ -491,6 +491,7 @@ rule h2h_table_error_entry:
         r"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl",
     output:
         r"h2h/model{i}/rep{j}/n{n}/{method}/error.pkl",
+    localrule: True
     run:
         i = int(wildcards.i)
         j = int(wildcards.j)

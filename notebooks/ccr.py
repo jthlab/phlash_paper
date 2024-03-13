@@ -76,8 +76,8 @@ for k in ccrs:
         dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms[k].items()}
         ccrs[k].append(
             2
-            * dms_i[("YRI","CHB")].eta(T, Ne=True)
-            / (dms_i["YRI"].eta(T, Ne=True) + dms_i["CHB"].eta(T, Ne=True))
+            * dms_i[("YRI","CHB")].eta(T)
+            / (dms_i["YRI"].eta(T) + dms_i["CHB"].eta(T))
         )
 
 # +
@@ -88,7 +88,8 @@ for k in ratios:
     for _ in range(1000):
         dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms[k].items()}
         Ne1, Ne2 = [dms_i[k].eta(T, Ne=True) for k in ("YRI", "CHB")]
-        ratios[k].append(Ne1 / Ne2 + Ne2 / Ne1)
+        x = (Ne1 / Ne2 + Ne2 / Ne1)
+        ratios[k].append(x.sum() - x.cumsum())
 
 
 # +
@@ -103,6 +104,7 @@ mpl.rcParams['text.latex.preamble'] = r'''
 \usepackage{amssymb}
 \usepackage{times}
 '''
+mpl.rcParams['font.size'] = 12
 
 
 
@@ -110,14 +112,14 @@ import matplotlib.gridspec as gridspec
 
 # Create a grid with 2 rows and 2 columns,
 # but the second column is twice as wide as the first one
-fig = plt.figure(figsize=(8.5-2+1, 2), dpi=300)
-gs = gridspec.GridSpec(1, 3, width_ratios=[2, 2, 2], wspace=.25)
-
+# fig, axs = plt.subplots(ncols=3, sharey=True, figsize=(6.5, 2.5), layout="constrained")
+# (ax2, ax1, ax3) = axs
+fig = plt.figure(figsize=(6.5, 2.5), layout="constrained")
+axd = fig.subplot_mosaic("ABC", sharey=True, width_ratios=[2, 2, 1])
+ax2 = axd["A"]
+ax1 = axd["B"]
+ax3 = axd["C"]
 # Subplots
-ax2 = fig.add_subplot(gs[0, 0])  # Top-left
-ax1 = fig.add_subplot(gs[0, 1], sharey=ax2)
-ax3 = fig.add_subplot(gs[0, 2], sharey=ax1)
-
 # fig, axs = plt.subplots(nrows=2, sharex=True)
 rng = np.random.default_rng(1)
 for d, ax in zip((ccrs, ratios), (ax2, ax1)):
@@ -146,7 +148,8 @@ G = (
 cmap = dict(zip(["YRI", "CEU", "CHB"], ['#0C5DA5', '#00B945', '#FF9500']))
 demesdraw.tubes(G, ax=ax3, colours=cmap, log_time=True, max_time=1e5)
 ax1.set_ylim(2e1, 1e5)
-ax1.set_xlabel("$N_1/N_2 + N_2/N_1$")
+ax1.set_xlim(1e1, 1e4)
+ax1.set_xlabel(r"$N_{\text{YRI}}/N_{\text{CHB}} + N_{\text{CHB}}/N_{\text{YRI}}$")
 # ax1.set_title("Ratio")
 # ax2.set_title("CCR")
 # ax1.title.set_position((0.5, 0.97))
@@ -154,7 +157,7 @@ ax1.set_xlabel("$N_1/N_2 + N_2/N_1$")
 for ax in ax1, ax2:
     ax.fill_between(ax.get_xlim(), 848, 5000, color="grey", alpha=0.15, linewidth=0)
 ax2.set_ylabel("Time (generations)")
-ax2.set_xlabel("Cross-coalescence rate")
+ax2.set_xlabel("YRI/CHB Cross-Coalescent Rate")
 ax1.set_ylabel("")
 ax3.set_ylabel("")
 ax3.yaxis.set_visible(False)
@@ -164,8 +167,8 @@ ax3.tick_params(
     bottom=False,      # ticks along the bottom edge are off
     top=False,         # ticks along the top edge are off
     labelbottom=True) # labels along the bottom edge are off
-ax3.spines["left"].set_visible(False)
-ax3.spines["top"].set_visible(False)
+for d in ["top", "right", "left", "bottom"]:
+    ax3.spines[d].set_visible(False)
 # pos = ax3.get_position() # Get current position
 # new_pos = [pos.x0 - .1, pos.y0, pos.width, pos.height] # Shift left by 0.05
 # ax3.set_position(new_pos) # Set new position
@@ -173,13 +176,13 @@ ax3.spines["top"].set_visible(False)
 import matplotlib.transforms as mtransforms
 for label, ax in zip('abc', [ax2, ax1, ax3]):
 # label physical distance in and down:
-    x = {'a': 7/72, 'b': -20/72, 'c': 15/72}[label]
+    x = {'a': 7/72, 'b': -20/72, 'c': 13/72}[label]
     trans = mtransforms.ScaledTranslation(x, -5/72, fig.dpi_scale_trans)
     ax.text(1.0 if label == 'b' else 0., 1.0, "(" + label + ")", transform=ax.transAxes + trans,
-        fontsize='medium', verticalalignment='top', fontfamily='serif',)
+        verticalalignment='top')
 # fig.suptitle("YRI-CHB divergence time estimation")
 # fig.tight_layout()
-fig.savefig(output)
+fig.savefig(output, bbox_inches="tight")
 # -
 
 np.array(data).shape

@@ -63,6 +63,7 @@ rule bneck_phlash_config:
         ret = {}
         ret["test_data"] = (input.bcf[0], samples)
         ret["train_data"] = [(path, samples) for path in input.bcf[1:]]
+	ret["theta"] = 4e-4
         ret["mutation_rate"] = stdpopsim.get_species("HomSap").genome.mean_mutation_rate
         dump_file(ret, output[0])
 
@@ -79,8 +80,7 @@ rule plot_bneck:
         f"{config['figures_path']}/bneck/plot.pdf",
     localrule: True
     run:
-        fig, axs = plt.subplots(ncols=2, figsize=(8.5 - 2, 3), dpi=300)
-        plt.set_cmap("Set1")
+        fig, axs = plt.subplots(ncols=2, figsize=(8.5 - 2, 2.5), layout="constrained")
         ## demographic model
         ax = axs[0]
         true_dms = load_file(input.yri)
@@ -183,7 +183,6 @@ rule plot_bneck:
             ax.text(0.0, 1.0, "(" + label + ")", transform=ax.transAxes + trans,
                 fontsize='medium', verticalalignment='top', fontfamily='serif',)
 
-        fig.tight_layout()
         fig.savefig(output[0])
 
 

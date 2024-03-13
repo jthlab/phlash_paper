@@ -55,3 +55,14 @@ rule plot_l2_vs_density:
             ax.text(0., 1.0, "(" + label + ")", transform=ax.transAxes + trans, fontsize='medium', verticalalignment='top', fontfamily='serif',)
         fig.supxlabel("Time (generations)", fontsize="medium")
         fig.savefig(output[0], bbox_inches="tight")
+
+
+rule plot_combined_composite_indep:
+    input:
+        indep=input_for_independence_plot,
+        comp=input_for_composite_plot
+    localrule: True
+    output:
+        f"{config['figures_path']}/comp_indep.pdf"
+    script:
+        '../notebooks/comp_indep.py'
