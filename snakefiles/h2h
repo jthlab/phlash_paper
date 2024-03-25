@@ -394,7 +394,7 @@ rule h2h_figure_combined:
         fig, axss = plt.subplots(
             nrows=3,
             ncols=4,
-            figsize=(11 - 1, 8.5 - 1),
+            figsize=(11 - 1, 8.5 - 1.5),
             dpi=300,
             sharex=True,
             sharey="row",
@@ -474,7 +474,7 @@ rule h2h_figure_combined:
             y, _ = axss[j, 0].get_ylim()
             axss[j, 0].text(0., 0., r"\texttt{" + f"{mdl[0]}/{mdl[1]}" + "}", transform=axss[j, 0].transAxes + trans, fontsize=8)
         axss[-1, 0].set_ylabel("$N_e(t)$")
-        axss[-1, 0].set_xlabel("Time (generations ago)")
+        axss[-1, 0].set_xlabel("Time")
         fig.tight_layout()
         fig.savefig(output[0])
 

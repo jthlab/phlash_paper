@@ -18,12 +18,12 @@ import matplotlib
 import matplotlib as mpl
 import scienceplots
 plt.style.use('science')
+mpl.rcParams['font.size'] = 12
 mpl.rcParams['text.latex.preamble'] = r'''
-\usepackage{amsmath} 
+\usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{times}
 '''
-mpl.rcParams['font.size'] = 12
 
 # +
 import numpy as np
@@ -76,17 +76,25 @@ import matplotlib.pyplot as plt
 fig = plt.figure(layout="constrained", figsize=(6.5, 2.5))
 axd = fig.subplot_mosaic(
         """
+        A--
         ABC
         ADE
         """,
-        width_ratios=[0.33,0.33,0.33]
+        width_ratios=[0.33,0.33,0.33],
+        height_ratios=[.05,.475,.475],
         )
 
+axd['-'].tick_params(axis='both',which='both',bottom=False,left=False,top=False,right=False)
+axd['-'].set_xticks([])
+axd['-'].set_yticks([])
+for d in ['right', 'top', 'bottom', 'left']:
+    axd['-'].spines[d].set_visible(False)
 # composite plot
 ax = axd['A']
 ax.boxplot(columns)
 ax.set_xticks(np.arange(1, 6), labels=OVERLAPS)
 ax.set_yscale('log')
+ax.xaxis.set_tick_params(which='minor',bottom=False,top=False)
 # ax.set_ylim(0, 1e-4)
 medians = df.groupby('overlap')['rel_err'].median()
 ax.plot(1 + np.arange(len(medians.index)), medians.values, linestyle="--", marker="o")
@@ -145,13 +153,13 @@ def dump_file(obj, path):
 for c, pop in zip("BCDE", ["Han", "Finnish", "Iberian", "Yoruba"]):
     ax = axd[c]
     T = np.geomspace(1e2, 2e5, 1000)
-    cl_p = load_file(f"composite/{pop}/phlash/estimates.pkl")
-    indep_p = load_file(f"unified/{pop}/phlash/estimates.pkl")
-    plot_posterior(cl_p, ax, label="Composite" if pop == "Han" else None)
-    plot_posterior(indep_p, ax, label="Independent" if pop == "Finnish" else None)
+    cl_p = load_file(f"unified/{pop}/phlash/estimates.pkl")
+    indep_p = load_file(f"composite/{pop}/phlash/estimates.pkl")
+    plot_posterior(cl_p, ax, label="Composite")
+    plot_posterior(indep_p, ax, label="Exact")
     ax.set_xscale('log')
     ax.set_yscale('log')
-    ax.set_title(pop, loc="center", fontsize=8, y=0.8)
+    ax.set_title(pop, loc="center", fontsize=8, y=0.75)
     ax.set_xlim(1e2, 2e5)
     ax.sharex(axd['B'])
     ax.sharey(axd['B'])
@@ -159,11 +167,13 @@ for c, pop in zip("BCDE", ["Han", "Finnish", "Iberian", "Yoruba"]):
         ax.tick_params(labelbottom=False)
     if c in "CE":
         ax.tick_params(labelleft=False)
-    ax.legend(loc="upper right")
-    if c == "D":
+    if pop == "Han":
+        fig.legend(*ax.get_legend_handles_labels(), ncol=2, loc="upper right", bbox_to_anchor=[0.94, 1.03])
+    if c in "DE":
         ax.set_xlabel("Time")
+    if c in "BD":
         ax.set_ylabel("$N_e$")
-    trans = mtransforms.ScaledTranslation(-20/72, 15/72, fig.dpi_scale_trans)
+    trans = mtransforms.ScaledTranslation(-25/72, 15/72, fig.dpi_scale_trans)
     ax.text(1.0, 0.0, f"({c.lower()})", transform=ax.transAxes + trans, verticalalignment='top')
 
 

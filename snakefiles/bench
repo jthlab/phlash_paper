@@ -49,29 +49,49 @@ rule plot_benchmark:
         print(mem_df)
 
         
-        fig, (ax1, ax2) = plt.subplots(figsize=(6.5, 2), ncols=2, layout="constrained")
+        fig, axd = plt.subplot_mosaic("""
+        A--
+        ABC
+        """, figsize=(6.5, 2.5), layout="constrained", height_ratios=[.10, .9])
+        axd['-'].tick_params(axis='both',which='both',bottom=False,left=False,top=False,right=False)
+        axd['-'].set_xticks([])
+        axd['-'].set_yticks([])
+        for d in ['right', 'top', 'bottom', 'left']:
+            axd['-'].spines[d].set_visible(False)
+        ax0 = axd['A']
+        ax1 = axd['B']
+        ax2 = axd['C']
+        # fig, (ax0, ax1, ax2) = plt.subplots(ncols=3, figsize=(6.5, 2.5))
+
+        df = pickle.load(open("bench/bench.df", "rb"))
+        methods = df['method'].unique()
+        for m in methods:
+            tdm = df[df['method'] == m]
+            ax0.errorbar(tdm['batch_size'], tdm['mean'], yerr=tdm['sd'], label=m, marker=".")
+        ax0.set_ylabel("Seconds")
+        ax0.set_xlim(0, 1100)
+        ax0.set_xlabel("Batch size")
+        ax0.set_yscale('log')
+        ax0.legend()
         for i, (m, lbl) in enumerate(H2H_PARAMS['labels'].items()):
-            if i < 2:
-                lbl1 = lbl
-                lbl2 = None
-            else:
-                lbl1 = None
-                lbl2 = lbl
             tdm = time_df[time_df['method'] == m]
             # l, = ax1.plot(tdm['n'], tdm['mean_time'], label=lbl1)
-            ax1.errorbar(tdm['n'], tdm['mean_time'], yerr=tdm['std_time'] / np.sqrt(tdm['size_time']), markersize=3, label=lbl1)
+            ax1.errorbar(tdm['n'], tdm['mean_time'], yerr=tdm['std_time'] / np.sqrt(tdm['size_time']), label=lbl)
             mdm = mem_df[mem_df['method'] == m]
             # l, = ax2.plot(mdm['n'], mdm['mean_mem'], label=lbl2)
-            ax2.errorbar(mdm['n'], mdm['mean_mem'], yerr=mdm['std_mem'] / np.sqrt(mdm['size_mem']), markersize=3, label=lbl2)
-        ax1.legend(loc="lower right")
-        ax2.legend(loc="lower right")
+            ax2.errorbar(mdm['n'], mdm['mean_mem'], yerr=mdm['std_mem'] / np.sqrt(mdm['size_mem']), label=lbl)
         ax1.set_yscale('log')
         ax2.set_yscale('log')
-        ax1.set_ylabel("CPU Time (Min./Gbp)")
+        ax1.set_ylabel("CPU (Mins./Gbp)")
         ax1.tick_params(axis='x', which='minor', bottom=False, top=False)
         ax2.tick_params(axis='x', which='minor', bottom=False, top=False)
         ax2.set_ylabel("Memory (Gb/Gbp)")
-        fig.supxlabel("Sample size ($n$)", fontsize="medium")
-        # ax1.set_xlabel("Sample size ($n$)")
-        # ax2.set_xlabel("Sample size ($n$)")
+        # fig.supxlabel("Sample size ($n$)", fontsize="medium")
+        ax1.set_xlabel("Sample size ($n$)")
+        ax2.set_xlabel("Sample size ($n$)")
+        trans = mtransforms.ScaledTranslation(5/72, -15/72, fig.dpi_scale_trans)
+        for x in "ABC":
+            axd[x].text(0., 1., f"({x.lower()})", transform=axd[x].transAxes + trans)
+        fig.legend(*ax1.get_legend_handles_labels(), ncol=4, loc="upper right", fontsize=9)
+       
         fig.savefig(output[0], bbox_inches="tight")

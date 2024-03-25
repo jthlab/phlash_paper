@@ -89,22 +89,24 @@ for k in ratios:
         dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms[k].items()}
         Ne1, Ne2 = [dms_i[k].eta(T, Ne=True) for k in ("YRI", "CHB")]
         x = (Ne1 / Ne2 + Ne2 / Ne1)
-        ratios[k].append(x.sum() - x.cumsum())
+        ratios[k].append(x)
 
 
 # +
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-
+import matplotlib.pyplot as plt
+import matplotlib
+import matplotlib as mpl
 import scienceplots
 plt.style.use('science')
-
+mpl.rcParams['font.size'] = 12
+mpl.rcParams['mathtext.fontset'] = 'stix'
 mpl.rcParams['text.latex.preamble'] = r'''
-\usepackage{amsmath} 
+\usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{times}
 '''
-mpl.rcParams['font.size'] = 12
 
 
 
@@ -148,7 +150,6 @@ G = (
 cmap = dict(zip(["YRI", "CEU", "CHB"], ['#0C5DA5', '#00B945', '#FF9500']))
 demesdraw.tubes(G, ax=ax3, colours=cmap, log_time=True, max_time=1e5)
 ax1.set_ylim(2e1, 1e5)
-ax1.set_xlim(1e1, 1e4)
 ax1.set_xlabel(r"$N_{\text{YRI}}/N_{\text{CHB}} + N_{\text{CHB}}/N_{\text{YRI}}$")
 # ax1.set_title("Ratio")
 # ax2.set_title("CCR")

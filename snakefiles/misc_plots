@@ -1,3 +1,73 @@
+def input_for_plot_recomb(wc):
+    for x in every_h2h_input_base():
+        if "phlash" in x:
+            yield os.path.join(x, "estimates.pkl")
+
+rule plot_recomb_rate:
+    input:
+        input_for_plot_recomb
+    output:
+        pdf=f"{config['figures_path']}/recomb.pdf",
+        df=f"figures/recomb.pkl"
+    localrule: True
+    run:
+        records = []
+        table_models = [
+            ("AnoGam", "GabonAg1000G_1A17", "GAS"),
+            ("AraTha", "SouthMiddleAtlas_1D17", "SouthMiddleAtlas"),
+            ("AraTha", "African3Epoch_1H18", "SouthMiddleAtlas"),
+            ("BosTau", "HolsteinFriesian_1M13", "Holstein_Friesian"),
+            ("DroMel", "African3Epoch_1S16", "AFR"),
+            # ("DroMel", "OutOfAfrica_2L06", "AFR"),
+            ("HomSap", "AmericanAdmixture_4B11", "ADMIX"),
+            ("HomSap", "Africa_1T12", "AFR"),
+            ("HomSap", "Constant", "pop_0"),
+            ("HomSap", "Zigzag_1S14", "generic"),
+            ("PanTro", "BonoboGhost_4K19", "bonobo"),
+            ("PapAnu", "SinglePopSMCpp_1W22", "PAnubis_SNPRC"),
+            ("PonAbe", "TwoSpecies_2L11", "Bornean"),
+        ]
+        for f in input:
+            assert f.startswith("h2h/")
+            h2h, mdl, rep, n, method, _ = f.split("/")
+            assert h2h == "h2h"
+            i = int(mdl[5:])
+            tup = species_name, _, _ = H2H_PARAMS['models'][i]
+            try:
+                j = table_models.index(tup)
+            except ValueError:
+                assert i == 0  # constant model
+                j = table_models.index(("HomSap", "Constant", "pop_0"))
+            species = stdpopsim.get_species(species_name)
+            chroms = (species.get_contig(chrom) for chrom in get_chroms(species_name))
+            ws, rhos = zip(*[(chrom.length, chrom.recombination_map.rate[0]) for chrom in chroms])
+            rho_true = np.average(rhos, weights=ws)
+            n = int(n[1:])
+            dms = load_file(f)
+
+            records.extend([
+                dict(n=n, method=method, model=j, err=float(dm.rho / rho_true))
+                for dm in dms
+            ])
+        df = pd.DataFrame.from_records(records)
+        df.to_pickle(output.df)
+        import seaborn as sns
+        fig, ax = plt.subplots(figsize=(6.5, 2.5), layout="constrained")
+        palette = dict(zip([1, 10, 100, 1000], [x['color'] for x in mpl.rcParams['axes.prop_cycle']]))
+        sns.boxplot(df, x="model", y="err", hue="n", ax=ax, linewidth=0.5, fliersize=.1, palette=palette)
+        ax.hlines(1.0, *ax.get_xlim(), linewidth=0.5, linestyle="--", color="grey", zorder=-100)
+        ax.set_ylabel(r"$\hat{\rho}/\rho$")
+        ax.set_xlabel("Model")
+        labels = ["Constant"] + [mdl for _, mdl, _ in H2H_PARAMS['models'][1:]]
+	labels = [r"\texttt{" + l + "}" for l in labels]
+        # ax.set_xticks(np.arange(12), labels=labels, rotation=45, ha='right', rotation_mode='anchor', fontsize=8)
+        ax.set_xticks(np.arange(12), labels=np.arange(1, 13))
+        ax.xaxis.set_tick_params(which='minor',bottom=False,top=False)
+        ax.legend(ncols=2, title="Sample size ($n$)")
+        fig.savefig(output.pdf, bbox_inches="tight")
+
+
+
 rule plot_l2_vs_density:
     input:
         expand(
@@ -10,7 +80,7 @@ rule plot_l2_vs_density:
     localrule: True
     run:
         fig, axs = _, (ax1, ax2, ax3) = plt.subplots(
-            ncols=3, figsize=(6.5, 2.5), layout="constrained", sharex=False
+            ncols=3, figsize=(6.5, 2), layout="constrained", sharex=False
         )
         T = H2H_PARAMS["T"]
         i = 5
@@ -53,7 +123,7 @@ rule plot_l2_vs_density:
         trans = mtransforms.ScaledTranslation(5/72, -5/72, fig.dpi_scale_trans)
         for ax, label in zip(axs, "abc"):
             ax.text(0., 1.0, "(" + label + ")", transform=ax.transAxes + trans, fontsize='medium', verticalalignment='top', fontfamily='serif',)
-        fig.supxlabel("Time (generations)", fontsize="medium")
+        fig.supxlabel("Time", fontsize="medium", y=0.01)
         fig.savefig(output[0], bbox_inches="tight")
 
 
@@ -66,3 +136,42 @@ rule plot_combined_composite_indep:
         f"{config['figures_path']}/comp_indep.pdf"
     script:
         '../notebooks/comp_indep.py'
+
+
+rule model_description_table:
+    output:
+        f"{config['figures_path']}/../tables/models.tex"
+    localrule: True
+    run:
+        records = []
+        def key(tup):
+            if isinstance(tup[1], str):
+                return tup
+            return (tup[0], "Constant", tup[2])
+        for species_id, model, pop in sorted(map(key, H2H_PARAMS['models'])):
+            sp = stdpopsim.get_species(species_id)
+            if model == "Constant":
+                desc = "Constant population size, $N_e=10^4$."
+            else:
+                desc = sp.get_demographic_model(model).description
+            mutation_rate = get_default_mutation_rate(species_id)
+            chroms = (sp.get_contig(chrom) for chrom in get_chroms(species_id))
+            ws, rhos = zip(*[(chrom.length, chrom.recombination_map.rate[0]) for chrom in chroms])
+            rho_true = np.average(rhos, weights=ws)
+            records.append({
+                'species': sp.common_name,
+                'model_id': r"\texttt{" + model.replace("_", r"\_") + "}",
+                'population': r"\texttt{" + pop.replace("_", r"\_") + "}",
+                'model_description': desc,
+                'mutation_rate': mutation_rate,
+                'recombination_rate': rho_true,
+                'genome_length': get_genome_length(species_id) / 1e9
+        })
+        df = pd.DataFrame.from_records(records)
+        def flf(x):
+            return f"\\num{{{x:.3g}}}"
+        df.index += 1
+        df.columns = ["Species", "Model", "Population", "Description", "$\\mu$", "$r$", "$L$"]
+        df['Description'] = df['Description'].str.replace("N(t)", "$N(t)$", regex=False)
+        with open(output[0], "wt") as f:
+            f.write(df.to_latex(float_format=flf, escape=False, index=True))

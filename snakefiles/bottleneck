@@ -1,16 +1,19 @@
 import stdpopsim
 import demes
+import scipy
 import msprime
 from itertools import product
 import tszip
 from sklearn.metrics import roc_curve, roc_auc_score
 
+HU_GEN_TIME = 24.
+
 BOTTLENECK_CONFIG = {
-    "sample_size": 132,
+    "sample_size": {"Yoruba": 224, "Han": 248},
     "num_replicates": 10,
     "alphas": [1.0, 0.1, 0.01],
-    "start": 813e3 / 29,
-    "duration": 117e3 / 29,
+    "start": 813e3 / HU_GEN_TIME,
+    "duration": 117e3 / HU_GEN_TIME,
 }
 
 
@@ -26,15 +29,15 @@ def bneck_model(eta0, alpha) -> stdpopsim.DemographicModel:
 
 rule bneck_sim_config:
     input:
-        "unified/Yoruba/phlash/estimates.pkl",
+        "unified/{population}/phlash/estimates.pkl",
     output:
-        r"bneck/rep{i,\d+}/alpha{j,\d+}/simulations/params.pkl",
+        r"bneck/{population,\w+}/rep{i,\d+}/alpha{j,\d+}/simulations/params.pkl",
     localrule: True
     run:
         i = int(wildcards.i)
         j = int(wildcards.j)
         params = {}
-        n = BOTTLENECK_CONFIG["sample_size"]
+        n = BOTTLENECK_CONFIG["sample_size"][wildcards.population]
         alpha = BOTTLENECK_CONFIG["alphas"][j]
         dms = load_file(input[0])
         T = np.r_[0.0, np.geomspace(1e1, 1e6, 1000)]
@@ -50,140 +53,231 @@ rule bneck_sim_config:
 
 rule bneck_phlash_config:
     input:
-        bcf=expand(r"bneck/{{params}}/simulations/chr{chrom}.bcf", chrom=range(1, 23)),
+        bcf=expand(r"bneck/{{population}}/{{params}}/simulations/chr{chrom}.bcf", chrom=range(1, 23)),
         csi=expand(
-            r"bneck/{{params}}/simulations/chr{chrom}.bcf.csi", chrom=range(1, 23)
+            r"bneck/{{population}}/{{params}}/simulations/chr{chrom}.bcf.csi", chrom=range(1, 23)
         ),
     output:
-        r"bneck/{params}/phlash/config.pkl",
+        r"bneck/{population,\w+}/{params}/phlash/config.pkl",
     localrule: True
     run:
-        n = BOTTLENECK_CONFIG["sample_size"]
+        n = BOTTLENECK_CONFIG["sample_size"][wildcards.population]
         samples = [f"sample{i}" for i in range(n)]
         ret = {}
         ret["test_data"] = (input.bcf[0], samples)
         ret["train_data"] = [(path, samples) for path in input.bcf[1:]]
-	ret["theta"] = 4e-4
         ret["mutation_rate"] = stdpopsim.get_species("HomSap").genome.mean_mutation_rate
+	ret["options"] = {"N0": 1e4}
         dump_file(ret, output[0])
+
+
+def inf_Ne(eta):
+    m = eta.t > 500e3 / 29
+    if m.sum() == 0:
+        return eta.Ne[-1]
+    return eta.Ne[m].min()
+
+
+def input_for_hexbin(wc):
+    ret = {}
+    metadata = load_file(checkpoints.merged_metadata.get().output[0])
+    for pop in metadata['populations']:
+        ret[pop] = f"unified/{pop}/phlash/estimates.pkl"
+    return ret
+
+rule bneck_hexbin:
+    input: unpack(input_for_hexbin)
+    output: 'bneck/hexbin.pkl'
+    localrule: True
+    run:
+        s = BOTTLENECK_CONFIG["start"]
+        d = BOTTLENECK_CONFIG["duration"]
+        T = np.linspace(s, s + d, 100)
+        Nes = {}
+        iNes = {}
+        for pop in input.keys():
+            dms = load_file(input[pop])
+            Nes[pop] = [d.eta(T, Ne=True) for d in dms]
+            iNes[pop] = [inf_Ne(d.eta) for d in dms]
+        dump_file({'Nes': Nes, 'iNes': iNes}, output[0])
 
 
 rule plot_bneck:
     input:
         simulated=expand(
-            r"bneck/rep{i}/alpha{j}/phlash/estimates.pkl",
+            r"bneck/{population}/rep{i}/alpha{j}/phlash/estimates.pkl",
+            population=("Yoruba", "Han"),
             i=range(BOTTLENECK_CONFIG["num_replicates"]),
             j=range(len(BOTTLENECK_CONFIG["alphas"])),
         ),
-        yri="unified/Yoruba/phlash/estimates.pkl",
+        Yoruba="unified/Yoruba/phlash/estimates.pkl",
+        Han="unified/Han/phlash/estimates.pkl",
+        hexbin='bneck/hexbin.pkl'
     output:
         f"{config['figures_path']}/bneck/plot.pdf",
     localrule: True
     run:
-        fig, axs = plt.subplots(ncols=2, figsize=(8.5 - 2, 2.5), layout="constrained")
-        ## demographic model
-        ax = axs[0]
-        true_dms = load_file(input.yri)
-        T = np.geomspace(1e1, 1e6, 1000)
-        true_Ne = np.median([d.eta(T, Ne=True) for d in true_dms], 0)
-        ax.plot(T, true_Ne, color="black", label="Yoruba")
-        reps = {}
-        alphas = BOTTLENECK_CONFIG["alphas"]
-        for f in input.simulated:
-            j = int(f.split("/")[2][-1])
-            alpha = alphas[j]
-            reps.setdefault(alpha, [])
-            reps[alpha].append(f)
-        cd = dict(zip(alphas, matplotlib.colormaps["Set1"].colors))
-        for alpha in sorted(reps):
-            lbld = False
-            for f in reps[alpha]:
-                dms = load_file(f)
-                Ne = np.median([d.eta(T, Ne=True) for d in dms], 0)
-                kw = dict(color=cd[alpha], alpha=0.1)
-                if not lbld:
-                    kw["label"] = f"$\\alpha={alpha}$"
-                    lbld = True
-                ax.plot(T, Ne, **kw)
         s = BOTTLENECK_CONFIG["start"]
         d = BOTTLENECK_CONFIG["duration"]
-        y0, y1 = ax.get_ylim()
-	ax.vlines(x=s, ymin=y0, ymax=y1, color="grey", linestyle="--", linewidth=0.5)
-        # ax.fill_between([s, s + d], [y0, y0], [y1, y1], color="black", alpha=0.1)
-        N0 = true_Ne[(T >= s) & (T < s + d)].mean()
-        x0, x1 = ax.get_xlim()
-        for alpha in alphas:
-            ax.hlines(alpha * N0, x0, x1, color=cd[alpha], linestyle="--", linewidth=0.5)
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_ylabel("$N_e(t)$")
-        leg = ax.legend()
-        for lh in leg.legendHandles:
-            lh.set_alpha(1)
+        T = np.linspace(s, s + d, 100)
 
-            # ## roc curve
-            # ax = axs[1]
-
-            # def inf_Ne(eta):
-            #     return eta.Ne[eta.t > 500e3 / 29].min()
-
-            # d = {}
-            # for alpha in alphas:
-            #     d[alpha] = []
-            #     for f in reps[alpha]:
-            #         dms = load_file(f)
-            #         d[alpha].append(np.median([inf_Ne(dm.eta) for dm in dms]))
-
-            # y_true = ([0] * 10) + ([1] * 10)
-            # for alpha in alphas[1:]:
-            #     y_score = d[alphas[0]] + d[alpha]
-            #     fpr, tpr, _ = roc_curve(y_true, y_score)
-            #     print(alpha, y_score)
-            #     auc = roc_auc_score(y_true, y_score)
-            #     ax.plot(fpr, tpr, label=f"$\\alpha={alpha}$ (AUC={auc:.3f})")
-
-            # ax.legend()
-
-            ## densities
-        ax = axs[1]
-
-
-        def inf_Ne(eta):
-            return eta.Ne[eta.t > 500e3 / 29].min()
-
-
-        d = {}
-        for alpha in alphas:
-            d[alpha] = []
-            for f in reps[alpha]:
-                dms = load_file(f)
-                d[alpha].extend([inf_Ne(dm.eta) for dm in dms])
-
-        v = list(d.values())
-        v = [inf_Ne(d.eta) for d in true_dms]
-        # v0 = np.median([inf_Ne(d.eta) for d in true_dms])
-        # bp = ax.violinplot(v, showmedians=True)  #  , colors=[cd[alpha] for alpha in alphas] + ["grey"])
-        for alpha in d:
-           ax.hist(d[alpha], color=cd[alpha], bins=200, label=f"$\\alpha={alpha}$", density=True)
-        ax.hist(v, color="gray", alpha=0.7, label="Yoruba", bins=50, density=True)
-	ax.legend()
-        # for kw in 'boxes', 'medians', 'whiskers', 'caps':
-        #     for obj, c in zip(bp[kw], cd.values()):
-        #         obj.set_color(c)
-        # ax.set_xticks(np.arange(1, 5), labels=[f'$\\alpha={alpha}$' for alpha in alphas] + ["Yoruba"])
-        ax.set_ylabel(r"Density")
-        ax.set_xlabel(r"$\inf_{t>t_\text{anc}} N_e(t)$")
-        # ax.vlines(v0, *ax.get_ylim(), label="Estimated", color="grey", linestyle="--", linewidth=.5)
-        # ax.set_xscale('log')
+        fig = plt.figure(figsize=(8.5 - 2, 4), layout="constrained")
+        axd = fig.subplot_mosaic("""
+        DA
+        CB
+        """)
+        yy = .8
+        axd['D'].set_title("All populations", fontsize=10, loc="left", x=.05, y=yy)
+        axd['D'].set_xlabel(r"Median $\inf_{t>t_\text{anc}} N_e(t)$")
+        axd['A'].set_title("Yoruba", fontsize=10, loc="center", y=yy)
+        axd['B'].set_title("Han", fontsize=10, loc="center", y=yy)
+        axd['C'].text(0.05, .95, "Yoruba", fontsize=10, transform=axd['C'].transAxes, horizontalalignment='left', verticalalignment="top")
+        axd['C'].text(0.05, .05, "Han", fontsize=10, transform=axd['C'].transAxes, horizontalalignment='left', verticalalignment="bottom")
 
         import matplotlib.transforms as mtransforms
-        for label, ax in zip('ab', axs):
-        # label physical distance in and down:
-            trans = mtransforms.ScaledTranslation(10/72, -5/72, fig.dpi_scale_trans)
-            ax.text(0.0, 1.0, "(" + label + ")", transform=ax.transAxes + trans,
-                fontsize='medium', verticalalignment='top', fontfamily='serif',)
+        trans = mtransforms.ScaledTranslation(-20/72, -5/72, fig.dpi_scale_trans)
+        for x, y in zip("DABC", "abcd"):
+            axd[x].text(1.0, 1.0, f"({y})", transform=axd[x].transAxes + trans, horizontalalignment="left", verticalalignment="top")
 
-        fig.savefig(output[0])
+        d = load_file(input.hexbin)
+        Nes = d['Nes']
+        iNes = d['iNes']
+
+        ## hexbin over all time
+        # x0 = (T * HU_GEN_TIME).tolist()
+        # x = []
+        # y = []
+        # for pop in Nes:
+        #     for y_pop in Nes[pop]:
+        #         x.extend(x0)
+        #         y.extend(y_pop.tolist())
+        # axd['A'].hexbin(x, y, yscale='log', gridsize=20, bins='log')
+        # axd['A'].ticklabel_format(style='sci', axis='x', scilimits=(0,0))
+        # axd['A'].set_ylim(7e3, 2e5)
+        # axd['A'].set_ylabel('$N_e(t)$')
+        # axd['A'].set_xlabel("Time (years)")
+
+        all_infs = [np.median(x) for x in iNes.values()]
+        axd['D'].hist(all_infs, bins=np.linspace(0, 18000, 50), density="True")
+        axd['D'].set_yticks([])
+        # axd['D'].sharex(axd['C'])
+        # axd['A'].sharex(axd['B'])
+
+        ## demographic model
+        T = np.geomspace(1e2, 1e6, 1000)
+        for pop, ax in zip(["Yoruba", "Han"], [axd['A'], axd['B']]):
+            linestyle = "-" if pop == "Yoruba" else "--"
+            dms = load_file(input[pop])
+            Nes = [d.eta(T, Ne=True) for d in dms]
+            true_Ne = np.median(Nes, 0)
+            reps = {}
+            alphas = BOTTLENECK_CONFIG["alphas"]
+            for f in input.simulated:
+                p = f.split("/")[1]
+                if p != pop: continue
+                j = int(f.split("/")[3][-1])
+                alpha = alphas[j]
+                reps.setdefault(alpha, [])
+                reps[alpha].append(f)
+            cd = dict(zip(sorted(reps), [x['color'] for x in mpl.rcParams['axes.prop_cycle']]))
+            print(cd)
+            for alpha in sorted(reps):
+                lbld = False
+                for f in reps[alpha]:
+                    dms = load_file(f)
+                    Ne = np.median([d.eta(T, Ne=True) for d in dms], 0)
+                    kw = dict(color=cd[alpha], alpha=0.25)
+                    if not lbld:
+                        kw["label"] = f"$\\alpha={alpha}$"
+                        lbld = True
+                    l, = ax.plot(T * HU_GEN_TIME, Ne, **kw, zorder=100)
+            ax.plot(T * HU_GEN_TIME, true_Ne, color="black", label=pop, zorder=-100)
+            print(cd)
+            s = BOTTLENECK_CONFIG["start"]
+            d = BOTTLENECK_CONFIG["duration"]
+            y0, y1 = ax.get_ylim()
+            ax.axvspan(s * HU_GEN_TIME, (s + d) * HU_GEN_TIME, color="grey", edgecolor=None, lw=0, alpha=.25)
+            # ax.fill_between([s, s + d], [y0, y0], [y1, y1], color="black", alpha=0.1)
+            N0 = true_Ne[(T >= s) & (T < s + d)].mean()
+            x0, x1 = ax.get_xlim()
+            for alpha in alphas:
+                ax.hlines(alpha * N0, x0, x1, color=cd[alpha], linestyle="--", linewidth=0.5)
+            ax.set_xscale("log")
+            # ax.set_yscale("log")
+            ax.set_ylabel("$N_e(t)$")
+            ax.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
+            if pop == "Han":
+                ax.set_xlabel("Years ($g=24$)")
+            ax.set_xlim(1e2 * HU_GEN_TIME, 5e5 * HU_GEN_TIME)
+            # ax.set_xlim(1e3, 1e6)
+
+            # mirror density
+            ax = axd['C']
+            d = {}
+            for alpha in alphas:
+                d[alpha] = []
+                for f in reps[alpha]:
+                    dms = load_file(f)
+                    for dm in dms:
+                        try:
+                            d[alpha].append(inf_Ne(dm.eta))
+                        except:
+                            print(alpha, dm)
+
+            v = list(d.values())
+            v = iNes[pop]
+            # v0 = np.median([inf_Ne(d.eta) for d in true_dms])
+            # bp = ax.violinplot(v, showmedians=True)  #  , colors=[cd[alpha] for alpha in alphas] + ["grey"])
+            B = np.linspace(2e3, 1.4e4, 50)
+            i = 1 if pop == "Yoruba" else -1
+            for alpha in sorted(d):
+               # ax.hist(d[alpha], color=cd[alpha], bins=B, label=f"$\\alpha={alpha}$", density=True)
+                kern = scipy.stats.gaussian_kde(d[alpha])
+                N = np.linspace(0, 18_000, 100)
+                lbl = "" if pop == "Han" else f"$\\alpha={alpha}$"
+                ax.fill_between(N, i * kern(N), color=cd[alpha], alpha=.5, linewidth=0, label=lbl, zorder=-100)
+                print(N, kern(N))
+            bins = np.linspace(0, 18000, 50)
+            d, be = np.histogram(v, bins=bins, density=True)
+            # ax.hist(v, color="black", alpha=0.2, label=pop, bins=B, density=True, linewidth=0, edgecolor=None, zorder=100)
+            print(pop, d, be)
+            label = "" if pop == "Han" else "Observed"
+            ax.bar(be[:-1], i * d, alpha=0.2, edgecolor=None, color="black", align="edge", label=label, width=np.diff(be))
+            leg = ax.legend(loc="lower center", ncols=2, fontsize=8)
+            # for kw in 'boxes', 'medians', 'whiskers', 'caps':
+            #     for obj, c in zip(bp[kw], cd.values()):
+            #         obj.set_color(c)
+            # ax.set_xticks(np.arange(1, 5), labels=[f'$\\alpha={alpha}$' for alpha in alphas] + ["Yoruba"])
+            ax.set_ylabel(r"Density")
+            ax.hlines(0, *ax.get_xlim(), color="black", linewidth=.25)
+            ax.set_yticks([])
+            ax.set_xlabel(r"$\inf_{t>t_\text{anc}} N_e(t)$")
+            # ax.vlines(v0, *ax.get_ylim(), label="Estimated", color="grey", linestyle="--", linewidth=.5)
+            # ax.set_xscale('log')
+
+            # import matplotlib.transforms as mtransforms
+            # for label, ax in zip(labels, row):
+            # # label physical distance in and down:
+            #     trans = mtransforms.ScaledTranslation(10/72, -5/72, fig.dpi_scale_trans)
+            #     ax.text(0.0, 1.0, "(" + label + ")", transform=ax.transAxes + trans,
+            #         fontsize='medium', verticalalignment='top', fontfamily='serif',)
+
+        # axd['A'].set_xticks([])
+        # axd['D'].set_xticks([0, 5000, 10000, 15000], labels=None)
+        axd['D'].set_xlim(0, 18000)
+        axd['C'].set_xlim(0, 18000)
+        axd['D'].set_ylabel('Density')
+
+        # for pop in input.keys():
+        #     if pop == "simulated": continue
+        #     dms = load_file(input[pop])
+        #     Nes.append([d.eta(T, Ne=True) for d in dms])
+        #     iNes.extend([inf_Ne(d.eta) for d in dms])
+        #     q025, q975 = np.quantile(Ne, [0.025, 0.975], axis=0)
+        #     row[0].fill_between(T, q025, q975, color='tab:blue', alpha=1 / N)
+        # row[1].hist(iNes, bins=1000)
+
+        fig.savefig(output[0], bbox_inches="tight")
 
 
 # rule plot_bneck:

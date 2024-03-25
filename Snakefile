@@ -13,14 +13,16 @@ os.environ["PSMC_PATH"] = config["psmc_path"]
 import matplotlib.pyplot as plt
 import matplotlib
 import matplotlib as mpl
+import matplotlib.transforms as mtransforms
 import scienceplots
 plt.style.use('science')
+mpl.rcParams['font.size'] = 12
+mpl.rcParams['mathtext.fontset'] = 'stix'
 mpl.rcParams['text.latex.preamble'] = r'''
-\usepackage{amsmath} 
+\usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{times}
 '''
-mpl.rcParams['font.size'] = 12
 
 
 def load_file(path):
