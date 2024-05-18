@@ -548,7 +548,7 @@ rule h2h_table_k:
 
 rule h2h_tables:
     input:
-        expand(f"{config['figures_path']}/../tables/table_{{k}}.tex", k=['l2', 'tv1', 'tvn'])
+        expand(f"{config['figures_path']}/../tables/table_{{k}}.tex", k=['l2', 'tv1', 'tvn', 'l2_sd', 'tv1_sd', 'tvn_sd'])
 
 # localrule h2h_figure_combined_big:
 #     input:

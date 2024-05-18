@@ -29,7 +29,12 @@ df_mean_std = df.melt(id_vars=['model', 'method', 'n', 'rep'], var_name='metric'
 df_mean_std.sort_index(inplace=True)
 df_mean_std.loc[('Africa_1T12', 1, 'l2')]
 
-sts = ['mean']
+SE = snakemake.output[0].endswith("_sd.tex")
+
+if SE:
+    sts = ['sem']
+else:
+    sts = ['mean']
 summary_df = df.groupby(['model', 'n', 'method']).agg({k: sts for k in ['l2', 'tv1', 'tvn']})
 
 s2 = summary_df.pivot_table(values=['l2', 'tv1', 'tvn'], index=['model', 'n'], columns='method')
@@ -84,7 +89,7 @@ def f(x):
             if "e" in s:  # scientific notation was chosen
                 s = f"{v:.5f}"
             b = min_df.loc[(model, n, metric, stat)][method]
-            if b:
+            if b and (not SE):
                 s = r'\mathbf{' + s + '}'
                 if t_df.loc[k + x.name]:
                     s += "^*"
@@ -103,11 +108,14 @@ s3 = s3.rename(columns={'phlash': r'\textsc{phlash}', 'smcpp': r"\textsc{SMC}\te
 
 
 import subprocess
-k = snakemake.wildcards.metric
+k = snakemake.wildcards.metric.split("_")[0]
 err = dict([("l2", "$L^2$"), ("tv1", "total variation"), ("tvn", r"$\mathrm{TV}_n$")])[k]
 s4 = s3.loc[:, (k,)]
 s4.columns.name = None
-cap = f"Performance comparison for {err} error."
+if SE:
+    cap = f"Standard errors for {err} error."
+else:
+    cap = f"Average {err} error."
 if err == "l2":
     cap += " (Errors have been divided by $10^8$.)"
 latex_str = s4.style.to_latex(hrules=True, clines="skip-last;data", environment="footnotesize")
