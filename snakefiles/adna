@@ -3,7 +3,7 @@ import tskit
 import numpy as np
 from collections import Counter
 
-from phlash.data import RawContig
+from phlash.data import Contig
 
 ADNA_CONFIG = {
     "ancient_samples": dict(
@@ -118,7 +118,7 @@ rule adna_unified_filtered:
         chrom_path = path_for_unified_chrom(wildcards.chrom)
         fhm_d = filtered_het_matrix(chrom_path, 100)
         for pop, d in fhm_d.items():
-            rc = RawContig(**d, window_size=100)
+            rc = Contig(**d, window_size=100)
             outpath = output[pop]
             dump_file(rc, outpath)
 
