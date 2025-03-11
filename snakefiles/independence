@@ -1,7 +1,7 @@
 import jax
 
 from phlash.hmm import psmc_ll
-from phlash.data import VcfContig, Contig
+from phlash.data import Contig
 from phlash.size_history import DemographicModel, SizeHistory
 from phlash.params import PSMCParams
 
@@ -43,8 +43,8 @@ rule indep_contig:
         r"indep/model{i}/contig.pkl",
     run:
         c = VcfContig(input[0], samples=["sample0"], contig=None, interval=None, _allow_empty_region=True)
-	rc = c.to_raw(100)
-	dump_file(rc, output[0])
+        rc = c.to_raw(100)
+        dump_file(rc, output[0])
 
 rule indep_compute_ll:
     input:
@@ -53,15 +53,15 @@ rule indep_compute_ll:
         r"indep/model{i}/res_{overlap,\d+}.pkl"
     run:
         rc = load_file(input[0])
-	overlap = int(wildcards.overlap)
+        overlap = int(wildcards.overlap)
         rel_err = eval_overlap(rc, overlap)
-	d = dict(rel_err=rel_err, overlap=overlap)
-	dump_file(d, output[0])
+        d = dict(rel_err=rel_err, overlap=overlap)
+        dump_file(d, output[0])
 
 def input_for_independence_plot(wc):
     return expand('indep/model{i}/res_{overlap}.pkl',
         i=range(len(H2H_PARAMS['models'])),
-	overlap=INDEP_CONFIG['overlaps'])
+        overlap=INDEP_CONFIG['overlaps'])
 
 rule plot_independence:
     # piggyback of all the other simulations we already ran
@@ -69,7 +69,7 @@ rule plot_independence:
         input_for_independence_plot
     localrule: True
     output:
-        f"{config['figures_path']}/independence/plot.pdf"
+        config['figures_path'] + "/independence/plot.pdf"
     script:
         '../notebooks/independence.py'
 

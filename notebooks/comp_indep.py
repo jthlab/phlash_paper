@@ -33,10 +33,8 @@ import os
 os.environ['JAX_PLATFORM_NAME'] = 'cpu'
 
 from phlash.hmm import psmc_ll
-from phlash.data import VcfContig, Contig
 from phlash.size_history import DemographicModel, SizeHistory
 from phlash.params import PSMCParams
-import phlash.plot
 from phlash.util import tree_stack
 
 # +

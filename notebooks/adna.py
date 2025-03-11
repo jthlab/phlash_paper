@@ -13,6 +13,8 @@
 #     name: python3
 # ---
 import numpy as np
+import jax
+jax.config.update('jax_platforms', 'cpu')
 
 # %load_ext nb_black
 import matplotlib.pyplot as plt

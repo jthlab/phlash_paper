@@ -1,12 +1,12 @@
+from dataclasses import replace
 import pickle
 import jax
 import phlash
+import phlash.fit.seq
 import sys
 import cyvcf2
 import os
 from concurrent.futures import ThreadPoolExecutor
-
-from phlash.data import RawContig
 
 
 def region_for_vcf(chrom_path):
@@ -19,23 +19,13 @@ def region_for_vcf(chrom_path):
 
 
 def process_chrom(conf_entry):
-    path = conf_entry[0]
-    if path.endswith(".tsz"):
-        path, nodes = conf_entry
-        return phlash.contig(path, nodes)
-    elif path.endswith(".bcf"):
-        path, samples = conf_entry
-        region = region_for_vcf(path)
-        return phlash.contig(path, samples=samples, region=region)
-    elif path.endswith(".pkl"):
-        contig = pickle.load(open(path, 'rb'))
-        assert isinstance(contig, phlash.data.Contig)
-        return contig
-    else:
-        raise ValueError("unknown file type")
+    assert conf_entry.endswith(".pkl")
+    c = pickle.load(open(conf_entry, 'rb'))
+    c = c._replace(ld=None)
+    return c
 
 if __name__ == "__main__":
-    assert jax.local_devices()[0].platform == "gpu"
+    # assert jax.local_devices()[0].platform == "gpu"
     conf = pickle.load(open(sys.argv[1], "rb"))
     test_data = process_chrom(conf["test_data"])
     try:
@@ -44,11 +34,7 @@ if __name__ == "__main__":
         num_workers = None
     with ThreadPoolExecutor(num_workers) as pool:
         train_data = list(pool.map(process_chrom, conf["train_data"]))
-    N = train_data[0].N
-    m = None
-    if N > 500:
-        m = 250
-    res = phlash.fit(
+    res = phlash.fit.seq.fit(
         data=train_data,
         test_data=test_data,
         mutation_rate=conf["mutation_rate"],

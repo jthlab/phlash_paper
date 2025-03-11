@@ -8,8 +8,7 @@ import scipy
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 
-import phlash.plot
-from phlash.data import RawContig, TreeSequenceContig
+from phlash.data import Contig
 
 COMPOSITE_PARAMS = {
     'populations': ["Yoruba", "Han", "Utah", "Tuscan", "Iberian", "Finnish"]
@@ -40,7 +39,7 @@ rule composite_gafs:
         ts = tszip.decompress(tsz)
         nodes = unified_nodes_for_pop(wildcards.population, metadata)
         gafs = gappy_afs(ts, nodes, 25_000, 100)
-        rc = RawContig(het_matrix=None, afs=gafs, window_size=100)
+        rc = Contig(hets=None, afs=gafs, window_size=100)
         with open(output[0], 'wb') as f:
             pickle.dump(rc, f)
 
@@ -48,11 +47,11 @@ rule phlash_raw_contig:
     input:
         'unified/{population}/chr{chrom}.pkl'
     output:
-        'composite/{population}/chr{chrom,\d\d?_[pq]}.pkl'
+        r'composite/{population}/chr{chrom,\d\d?_[pq]}.pkl'
     localrule: True
     run:
         c = load_file(input[0])
-        cc = RawContig(
+        cc = Contig(
             het_matrix=c.het_matrix[:1],
             afs=None,
             window_size=c.window_size
@@ -88,7 +87,7 @@ rule composite_phlash_config:
         for pkl in input.seq + input.afs:
             params['train_data'].append((pkl, None))
         params['mutation_rate'] = config['human_mutation_rate']
-	params["options"] = {"theta": 1e-4}
+        params["options"] = {"theta": 1e-4}
         dump_file(params, output[0])
 
 rule plot_composite_i:
@@ -96,14 +95,14 @@ rule plot_composite_i:
         cl="unified/{population}/phlash/estimates.pkl",
         indep="composite/{population}/phlash/estimates.pkl"
     output:
-        f"{config['figures_path']}/composite/{{population}}/plot.pdf"
+        config['figures_path'] + "/composite/{population}/plot.pdf"
     localrule: True
     run:
         os.environ['CUDA_VISIBLE_GPUS'] = ""
         dms = {k: load_file(v) for k, v in input.items()}
         fig, ax = plt.subplots()
-        phlash.plot.plot_posterior(dms['indep'], ax)
-        phlash.plot.plot_posterior(dms['cl'], ax)
+        phlash.util.plot_posterior(dms['indep'], ax)
+        phlash.util.plot_posterior(dms['cl'], ax)
         ax.set_xlabel("Generations")
         ax.set_ylabel("$N_e$")
         ax.set_xscale('log')
@@ -115,12 +114,12 @@ rule plot_earthmover:
         cl=expand("unified/{population}/phlash/estimates.pkl", population=COMPOSITE_PARAMS['populations']),
         indep=expand("composite/{population}/phlash/estimates.pkl", population=COMPOSITE_PARAMS['populations'])
     output:
-        f"{config['figures_path']}/composite/earthmover.pdf"
+        config['figures_path'] + "/composite/earthmover.pdf"
     localrule: True
     run:
         os.environ['CUDA_VISIBLE_GPUS'] = ""
         fig, ax = plt.subplots()
-	T = H2H_PARAMS["T"]
+        T = H2H_PARAMS["T"]
         for cl_p, indep_p in zip(input.cl, input.indep):
             pop = cl_p.split("/")[1]
             cl_p = load_file(cl_p)
@@ -135,7 +134,7 @@ rule plot_earthmover:
         fig.savefig(output[0])
 
 def input_for_composite_plot(wc):
-    return expand(f"{config['figures_path']}/composite/{{pop}}/plot.pdf", pop=COMPOSITE_PARAMS['populations'])
+    return expand(config['figures_path'] + "/composite/{pop}/plot.pdf", pop=COMPOSITE_PARAMS['populations'])
 
 rule plot_composite:
     input:

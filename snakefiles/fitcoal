@@ -6,7 +6,7 @@ import pandas as pd
 
 rule bcf_afs:
     input:
-        [ancient(f"{{analysis}}/simulations/chr{{chrom}}.{ext}") for ext in ["bcf", "bcf.csi"]]
+        [ancient("{analysis}/simulations/chr{chrom}." + ext) for ext in ["bcf", "bcf.csi"]]
     output:
         r"{analysis}/n{n,\d+}/chr{chrom}.afs.txt",
     run:
@@ -70,8 +70,7 @@ rule fitcoal_estimate:
     benchmark:
         "{analysis}/fitcoal/bench.txt",
     resources:
-        runtime=1440,
-	mem_mb=8000,
+        runtime=1440, mem_mb=8000,
     params:
         params_for_fitcoal_estimate
     shell: 
@@ -99,4 +98,4 @@ rule fitcoal_to_dm:
         eta = SizeHistory(t=df["year"].to_numpy(), c=1.0 / 2 / Ne)
         mu = params["mutation_rate_per_kb"] / 1e3
         dm = DemographicModel(theta=mu, rho=None, eta=eta)
-	dump_file(dm, output[0])
+        dump_file(dm, output[0])

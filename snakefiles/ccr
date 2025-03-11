@@ -46,15 +46,18 @@ rule ccr_combined_contig:
         dump_file(node_map, output[1])
 
 
-rule ccr_phlash_unified_config:
+rule ccr_phlash_process_chrom_unified:
     input:
         metadata="unified/merged_metadata.pkl",
-        chroms=expand("ccr/unified/chr{chrom}.tsz", chrom=unified_chroms()),
-        node_maps=expand("ccr/unified/chr{chrom}.node_map.pkl", chrom=unified_chroms()),
+        chrom_path="ccr/unified/chr{chrom}.tsz",
+        node_map="ccr/unified/chr{chrom}.node_map.pkl",
     output:
-        r"ccr/unified/{population,(combined|Yoruba|Han)}/phlash/config.pkl",
-    localrule: True
+        r"ccr/unified/{population,(merged|combined|Yoruba|Han)}/chr{chrom}.pkl",
+    resources:
+        mem_mb=32000
+    threads: 8
     run:
+        jax.config.update('jax_platforms', 'cpu')
         metadata = load_file(input.metadata)
         nodes_d = {
             pop: unified_nodes_for_pop(pop, metadata) for pop in ("Yoruba", "Han")
@@ -63,28 +66,58 @@ rule ccr_phlash_unified_config:
             nodes = list(
                 zip(*[np.reshape(nodes_d[pop], -1) for pop in ("Yoruba", "Han")])
             )
+        elif wildcards.population == "merged":
+            nodes1 = list(map(tuple, nodes_d["Yoruba"]))
+            nodes2 = list(map(tuple, nodes_d["Han"]))
+            nodes = nodes1[::2] + nodes2[::2]
         else:
             nodes = list(map(tuple, nodes_d[wildcards.population]))
         d = {}
-        for chrom, node_map_path in zip(input.chroms, input.node_maps):
-            node_map = load_file(node_map_path)
-            d[chrom] = list(map(tuple, node_map[nodes]))
-        pairs = list(d.items())
+        r = get_default_recombination_rate("HomSap", wildcards.chrom[:-2])
+        node_map = load_file(input.node_map)
+        nodes = list(map(tuple, node_map[nodes]))
+        ts = tszip.decompress(input.chrom_path)
+        tc = ts.tables
+        tc.nodes.set_columns(
+            flags=tc.nodes.flags,
+            time=tc.nodes.time,
+            population=np.full_like(tc.nodes.population, 0),
+            individual=tc.nodes.individual,
+        )
+        ts = tc.tree_sequence()
+        with jax.default_device(jax.devices("cpu")[0]):
+            contig = phlash.Contig.from_ts(ts=ts, nodes=nodes, genetic_map=r)
+        dump_file(contig, output[0])
+
+
+rule ccr_phlash_unified_config:
+    input:
+        chroms=expand(
+            "ccr/unified/{{population}}/chr{chrom}.pkl", chrom=unified_chroms()
+        ),
+    output:
+        r"ccr/unified/{population,(merged|combined|Yoruba|Han)}/phlash/config.pkl",
+    localrule: True
+    run:
+        test_chrom = input[0]
+        train_chroms = input[1:]
         ret = {}
-        ret["test_data"] = pairs[0]
-        ret["train_data"] = pairs[1:]
+        ret["n"] = 1000
+        ret["test_data"] = test_chrom
+        ret["train_data"] = train_chroms
         ret["mutation_rate"] = config["human_mutation_rate"]
         dump_file(ret, output[0])
 
 
-rule ccr_phlash_simulated_config:
+rule ccr_phlash_process_chrom_sim:
     input:
-        expand("ccr/simulations/chr{chrom}.tsz", chrom=range(1, 23)),
+        chrom_path="ccr/simulations/chr{chrom}.tsz",
     output:
-        r"ccr/simulations/{population,(combined|YRI|CHB)}/phlash/config.pkl",
-    localrule: True
+        "ccr/simulations/{population}/chr{chrom}.pkl",
+    resources:
+        mem_mb=12000,
     run:
-        ts = tszip.decompress(input[-1])
+        ts = tszip.decompress(input[0])
         yri_id, chb_id = [
             [p.id for p in ts.populations() if p.metadata["name"] == n]
             for n in ("YRI", "CHB")
@@ -100,30 +133,57 @@ rule ccr_phlash_simulated_config:
             for pid in (yri_id, chb_id)
         ]
         combined_nodes = list(zip(yri_nodes.flat, chb_nodes.flat))
-        nodes = {"YRI": yri_nodes, "CHB": chb_nodes, "combined": combined_nodes}[
-            wildcards.population
-        ]
+        nodes = {
+            "YRI": yri_nodes,
+            "CHB": chb_nodes,
+            "merged": np.concatenate([yri_nodes[::2], chb_nodes[::2]]),
+            "combined": combined_nodes,
+        }[wildcards.population]
+        r = get_default_recombination_rate("HomSap", wildcards.chrom)
         nodes = list(map(tuple, nodes))
-        pairs = [(chrom, nodes) for chrom in input]
+        tc = ts.tables
+        tc.nodes.set_columns(
+            flags=tc.nodes.flags,
+            time=tc.nodes.time,
+            population=np.full_like(tc.nodes.population, 0),
+            individual=tc.nodes.individual,
+        )
+        ts = tc.tree_sequence()
+        contig = Contig.from_ts(ts=ts, nodes=nodes, genetic_map=r)
+        dump_file(contig, output[0])
+
+
+rule ccr_phlash_sim_config:
+    input:
+        chroms=expand(
+            "ccr/simulations/{{population}}/chr{chrom}.pkl", chrom=range(1, 23)
+        ),
+    output:
+        r"ccr/simulations/{population,(merged|combined|YRI|CHB)}/phlash/config.pkl",
+    localrule: True
+    run:
+        test_chrom = input[0]
+        train_chroms = input[1:]
         ret = {}
-        ret["test_data"] = pairs[0]
-        ret["train_data"] = pairs[1:]
+        ret["n"] = 1000
+        ret["test_data"] = test_chrom
+        ret["train_data"] = train_chroms
         ret["mutation_rate"] = config["human_mutation_rate"]
         dump_file(ret, output[0])
 
 
 rule plot_ccr:
     input:
-        simulated=expand(
-            "ccr/simulations/{population}/phlash/estimates.pkl",
-            population=["YRI", "CHB", "combined"],
-        ),
+        # simulated=expand(
+        #     "ccr/simulations/{population}/phlash/estimates.pkl",
+        #     population=["YRI", "CHB", "combined", "merged"],
+        # ),
         real=expand(
             "ccr/unified/{population}/phlash/estimates.pkl",
-            population=["Yoruba", "Han", "combined"],
+            population=["Yoruba", "Han", "combined", "merged"],
         ),
     output:
-        f"{config['figures_path']}/ccr/plot.pdf",
+        config['figures_path'] + "/ccr/plot.pdf",
     localrule: True
     script:
         "../notebooks/ccr.py"

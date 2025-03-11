@@ -8,5 +8,5 @@
 
 module restore eastbay_paper
 cd /home/jonth/eastbay_paper
-source venv/bin/activate
+source /home/jonth/opt/phlash/bin/activate
 snakemake --profile simple 

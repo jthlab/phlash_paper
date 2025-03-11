@@ -1,3 +1,7 @@
+import phlash.util
+import phlash.size_history
+import jax
+
 def input_for_plot_recomb(wc):
     for x in every_h2h_input_base():
         if "phlash" in x:
@@ -7,8 +11,8 @@ rule plot_recomb_rate:
     input:
         input_for_plot_recomb
     output:
-        pdf=f"{config['figures_path']}/recomb.pdf",
-        df=f"figures/recomb.pkl"
+        pdf=config['figures_path'] + "/recomb.pdf",
+        df="figures/recomb.pkl"
     localrule: True
     run:
         records = []
@@ -59,7 +63,7 @@ rule plot_recomb_rate:
         ax.set_ylabel(r"$\hat{\rho}/\rho$")
         ax.set_xlabel("Model")
         labels = ["Constant"] + [mdl for _, mdl, _ in H2H_PARAMS['models'][1:]]
-	labels = [r"\texttt{" + l + "}" for l in labels]
+        labels = [r"\texttt{" + l + "}" for l in labels]
         # ax.set_xticks(np.arange(12), labels=labels, rotation=45, ha='right', rotation_mode='anchor', fontsize=8)
         ax.set_xticks(np.arange(12), labels=np.arange(1, 13))
         ax.xaxis.set_tick_params(which='minor',bottom=False,top=False)
@@ -76,7 +80,7 @@ rule plot_l2_vs_density:
             method=["phlash", "msmc2", "smcpp"],
         ),
     output:
-        f"{config['figures_path']}/l2_vs_tv.pdf"
+        config['figures_path'] + "/l2_vs_tv.pdf"
     localrule: True
     run:
         fig, axs = _, (ax1, ax2, ax3) = plt.subplots(
@@ -93,7 +97,7 @@ rule plot_l2_vs_density:
             Nes = []
             denss = []
             for j in range(3):
-                path = f"h2h/model5/rep{j}/n1/{method}/estimates.pkl"
+                path = "h2h/model5/rep{j}/n1/{method}/estimates.pkl".format(j=j, method=method)
                 dm = load_file(path)
                 if method == "phlash":
                     # list of posterior samples from dm, take posterior median as point estimate
@@ -108,10 +112,11 @@ rule plot_l2_vs_density:
                     dens = dm.rescale(truth.theta).eta.density()(T)
                 denss.append(dens)
                 Nes.append(Ne)
-            label = {'msmc2': r'\textsc{msmc2}', 'smcpp': r"\textsc{smc}\texttt{++}", 'phlash': r'\textsc{phlash}'}[method]
-            ax1.plot(T, np.median(Nes, 0), label=label, alpha=0.8)
-            ax2.plot(T, np.median(denss, 0), label=label, alpha=0.8)
-            ax3.plot(T, np.median(denss, 0), label=label, alpha=0.8)
+            label = H2H_PARAMS['labels'][method]
+            color = H2H_PARAMS['colors'][method]
+            ax1.plot(T, np.median(Nes, 0), label=label, color=color, alpha=0.8)
+            ax2.plot(T, np.median(denss, 0), label=label, color=color, alpha=0.8)
+            ax3.plot(T, np.median(denss, 0), label=label, color=color, alpha=0.8)
         ax2.legend(loc="upper center")
         ax1.set_xscale('log')
         ax1.set_yscale('log')
@@ -133,14 +138,14 @@ rule plot_combined_composite_indep:
         comp=input_for_composite_plot
     localrule: True
     output:
-        f"{config['figures_path']}/comp_indep.pdf"
+        config['figures_path'] + "/comp_indep.pdf"
     script:
         '../notebooks/comp_indep.py'
 
 
 rule model_description_table:
     output:
-        f"{config['figures_path']}/../tables/models.tex"
+        config['figures_path'] + "/../tables/models.tex"
     localrule: True
     run:
         records = []
@@ -169,9 +174,51 @@ rule model_description_table:
         })
         df = pd.DataFrame.from_records(records)
         def flf(x):
-            return f"\\num{{{x:.3g}}}"
+            return r"\num{" + x + "}"
         df.index += 1
         df.columns = ["Species", "Model", "Population", "Description", "$\\mu$", "$r$", "$L$"]
         df['Description'] = df['Description'].str.replace("N(t)", "$N(t)$", regex=False)
         with open(output[0], "wt") as f:
             f.write(df.to_latex(float_format=flf, escape=False, index=True))
+
+rule plot_sawtooth_cb:
+    input:
+        msmc2="h2h/model8/rep0/n10/msmc2/estimates.pkl",
+        smcpp="h2h/model8/rep0/n10/smcpp/estimates.pkl",
+        fitcoal="h2h/model8/rep0/n100/fitcoal/estimates.pkl",
+        phlash="h2h/model8/rep0/n100/phlash/estimates.pkl",
+    output:
+        config['figures_path'] + "/sawtooth_cb.pdf"
+    localrule: True
+    run:
+        jax.config.update("jax_platforms", "cpu")
+        model = H2H_PARAMS["models"][8]
+        truth = get_truth(*model)
+        fig, axs = _, (ax1, ax2) = plt.subplots(
+            ncols=2, figsize=(6.5, 2), layout="constrained", sharex=True, sharey=True
+        )
+        for k, f in input.items():
+            dm = load_file(f)
+            if k == "phlash":
+                dms = phlash.util.tree_stack(dm)
+                t = np.geomspace(1e1, 1e5, 1000)
+                phlash_cs = jax.vmap(lambda dm: dm.eta(t))(dms)
+                c = np.median(phlash_cs, 0)
+                eta = phlash.size_history.SizeHistory(t=t, c=c)
+                eta.draw(ax=ax2, style=False, color=H2H_PARAMS["colors"]["phlash"])
+            else:
+                eta = dm.eta
+            eta.draw(ax=ax1, style=False, label=H2H_PARAMS['labels'][k], color=H2H_PARAMS['colors'][k])
+        truth.eta.draw(ax=ax1, style=False, color="black")
+        ax1.set_ylim(5e3, 1e5)
+        ax1.set_xlim(1e1, 1e5)
+        ax1.set_xscale('log')
+        ax1.set_yscale('log')
+        dms = load_file(input['phlash'])
+        for dm in dms:
+            dm.eta.draw(ax=ax2, style=False, color=H2H_PARAMS['colors']['phlash'], alpha=0.01)
+        ax1.set_ylabel("$N_e$")
+        ax1.set_xlabel(None)
+        fig.supxlabel("Time", fontsize="medium", y=-0.10)
+        fig.legend(*ax1.get_legend_handles_labels(), ncol=4, loc="upper center", fontsize=12, bbox_to_anchor=(0.5, 1.15))
+        fig.savefig(output[0], bbox_inches="tight")

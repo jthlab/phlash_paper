@@ -7,14 +7,17 @@ import os.path
 import glob
 import re
 
+import jax
+import pandas as pd
 import phlash
-from phlash.data import RawContig
+import stdpopsim
+from phlash.data import Contig
 
 
 def path_for_unified_chrom(chrom):
     return os.path.join(
         config["unified_path"],
-        f"hgdp_tgp_sgdp_high_cov_ancients_chr{chrom}.dated.trees.tsz",
+        "hgdp_tgp_sgdp_high_cov_ancients_chr" + chrom + ".dated.trees.tsz",
     )
 
 
@@ -83,7 +86,6 @@ checkpoint supermerged:
         "unified/metadata.pkl",
     output:
         "unified/super_merged_metadata.pkl",
-    localrule: True
     run:
         metadata = load_file(input[0])
         pop_data = {}
@@ -139,11 +141,13 @@ rule unified_subsample:
         "unified/merged_metadata.pkl",
         "unified/super_merged_metadata.pkl",
     output:
-        "unified/{population}/chr{chrom}.pkl",
+        r"unified/{population,(super/)?[^\/]+}/chr{chrom}.pkl",
     resources:
-        mem_mb=12000,
-        runtime=60,
+        mem_mb=48000,
+        runtime=360,
+    threads: 12,
     run:
+        jax.config.update('jax_platforms', 'cpu')
         metadata = load_file(input[0])
         super_metadata = load_file(input[1])
         if wildcards.population.startswith("super/"):
@@ -151,14 +155,25 @@ rule unified_subsample:
             nodes = super_metadata[label]
         else:
             nodes = unified_nodes_for_pop(wildcards.population, metadata)
+        rng = np.random.default_rng(1)
+        if len(nodes) > 500:
+            nodes = rng.choice(nodes, 500, replace=False)
+            nodes = list(map(tuple, nodes.tolist()))
         chrom_path = path_for_unified_chrom(wildcards.chrom)
         new_ts, node_map = subsample_unified(chrom_path, nodes)
-        nodes = [tuple(i.nodes) for i in new_ts.individuals()]
-        c = phlash.contig(new_ts, nodes)
-        d = c.get_data(100)
-        rc = RawContig(**d, window_size=100)
-        dump_file(rc, output[0])
-
+        new_nodes = [(node_map[a], node_map[b]) for a, b in nodes]
+        tc = new_ts.tables
+        tc.nodes.set_columns(
+            flags=tc.nodes.flags,
+            time=tc.nodes.time,
+            population=np.full_like(tc.nodes.population, 0),
+            individual=tc.nodes.individual,
+        )
+        new_ts = tc.tree_sequence()
+        r = get_default_recombination_rate("HomSap", wildcards.chrom[:-2])
+        with jax.default_device(jax.devices("cpu")[0]):
+            c = phlash.Contig.from_ts(ts=new_ts, nodes=new_nodes)
+            dump_file(c, output[0])
 
 rule unified_config_for_phlash:
     input:
@@ -167,7 +182,6 @@ rule unified_config_for_phlash:
         super_metadata="unified/super_merged_metadata.pkl",
     output:
         "unified/{population}/phlash/config.pkl",
-    localrule: True
     run:
         if wildcards.population.startswith("super/"):
             label = wildcards.population[len("super/") :]
@@ -180,22 +194,23 @@ rule unified_config_for_phlash:
             nodes = np.arange(2 * len(orig_nodes)).reshape(-1, 2)
             nodes = list(map(tuple, nodes))
         params = {}
-        params["test_data"] = (input.chroms[0], nodes)
-        params["train_data"] = [(c, nodes) for c in input.chroms[1:]]
+        params["n"] = len(nodes)
+        params["test_data"] = input.chroms[0]
+        params["train_data"] = input.chroms[1:]
         params["mutation_rate"] = config["human_mutation_rate"]
-        params["options"] = {"N0": 1e4}
         dump_file(params, output[0])
 
 
 def input_for_unified_all(wc):
     metadata = load_file(checkpoints.merged_metadata.get().output[0])
-    return {pop: f"unified/{pop}/phlash/estimates.pkl" for pop in metadata["populations"]}
+    return {pop: "unified/{pop}/phlash/estimates.pkl".format(pop=pop) for pop in metadata["populations"]}
 
 rule unified_all:
     input:
         unpack(input_for_unified_all)
     output:
-        f"{config['figures_path']}/unified/all.pdf",
+        config['figures_path'] + "/unified/all.pdf",
+        config['figures_path'] + "/unified/all.csv",
     localrule: True
     run:
         
@@ -219,15 +234,15 @@ rule unified_all:
 def input_for_unified_merged(wc):
     super_metadata = load_file(checkpoints.supermerged.get().output[0])
     ret = {
-        label: f"unified/super/{label}/phlash/estimates.pkl" for label in super_metadata
+        label: "unified/super/{label}/phlash/estimates.pkl".format(label=label) for label in super_metadata
     }
     ret.update({
-        label: f"unified/{label}/phlash/estimates.pkl" for label in ["Yoruba", "Papuan", "Han"]
+        label: "unified/{label}/phlash/estimates.pkl".format(label=label) for label in ["Yoruba", "Papuan", "Han"]
 })
     ret.update({
-        label: f"adna/{label}/filtered/phlash/estimates.pkl" for label in ["Altai", "Vindija", "Denisovan"]
+        label: "adna/{label}/unfiltered/phlash/estimates.pkl".format(label=label) for label in ["Altai", "Vindija", "Denisovan"]
 })
-    ret['all_pops'] = list(input_for_unified_all(wc).values())
+    ret['all_pops'] = [v for k, v in input_for_unified_all(wc).items() if k not in ["Altai", "Vindija", "Denisovan", "Chagyrskaya", "Afanasievo"]]
     return ret
 
 
@@ -237,6 +252,7 @@ rule plot_unified_merged_helper:
     output:
         "unified/all_Ne.pkl"
     run:
+        jax.config.update('jax_platforms', 'cpu')
         ret = {}
         T = np.geomspace(1e2, 1e6, 1000)
         for f in input.all_pops:
@@ -251,33 +267,44 @@ rule plot_unified_merged:
         unpack(input_for_unified_merged),
         preprocessed="unified/all_Ne.pkl",
     output:
-        f"{config['figures_path']}/unified/merged.pdf",
+        config['figures_path'] + "/unified/merged.pdf",
+        config['figures_path'] + "/unified/fig7a.csv",
+        config['figures_path'] + "/unified/fig7b.csv",
     localrule: True
     run:
+        jax.config.update('jax_platforms', 'cpu')
         import matplotlib.transforms as mtransforms
-        fig, axs = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, layout="constrained", figsize=(6.5, 4))
-        axs[0,0].tick_params('x', labelbottom=False)
-        axs[0,1].tick_params('x', labelbottom=False)
-        axs[0,1].tick_params('y', labelleft=False)
-        axs[1,1].tick_params('y', labelleft=False)
-        axs = axs.T
+        fig, axs = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True, layout="constrained", figsize=(6.5, 2))
+        # axs[0,0].tick_params('x', labelbottom=False)
+        # axs[0,1].tick_params('x', labelbottom=False)
+        # axs[0,1].tick_params('y', labelleft=False)
+        # axs[1,1].tick_params('y', labelleft=False)
+        # axs = axs.T
         T = np.geomspace(1e2, 1e6, 1000)
-        ax = axs[0,0]
+        # ax = axs[0]
         pp = load_file(input.preprocessed)
+        records = []
         for f in input.all_pops:
+            if f in ["Vindija", "Altai", "Denisovan"]: continue
             med_Ne = pp[f]
-            ax.plot(T, med_Ne, alpha=0.05, color="black")
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        ax.set_xlim(1e2, 1e6)
-        ax.axvspan(813e3/24, 930e3/24, color="grey", edgecolor=None, lw=0, alpha=.25)
+            # ax.plot(T, med_Ne, alpha=0.05, color="black")
+            records.append(pd.DataFrame(dict(pop=f, years=T, Ne=med_Ne)))
+        # Combine all the data into a single DataFrame
+        full_df = pd.concat(records, ignore_index=True)
+        # # Save the DataFrame to a CSV file
+        full_df.to_csv(output[1], index=False)
+        # ax.set_xscale('log')
+        # ax.set_yscale('log')
+        # ax.set_xlim(1e2, 1e6)
+        # ax.axvspan(813e3/24, 930e3/24, color="grey", edgecolor=None, lw=0, alpha=.25)
 
 
-        ax = axs[1,0]
+        ax = axs[0]
         specific = ["Han", "Yoruba", "Papuan", "Altai", "Vindija", "Denisovan"]
         keys = specific + ["Africa", "America", "Ancient", "East Asia", "Central-South Asia", "Europe-Middle East", "Oceania"]
         lines = {}
         trans = mtransforms.ScaledTranslation(0., -2/72, fig.dpi_scale_trans)
+        records = []
         for label in keys:
             if label in specific: continue
             dms = load_file(input[label])
@@ -287,7 +314,13 @@ rule plot_unified_merged:
             Ne = np.median(Nes, 0)
             kw = {}
             kw['label'] = label
-            line, = ax.plot(T, Ne, **kw)
+            U = T 
+            if label in ["Ancient", "Vindija", "Altai", "Denisovan"]:
+                if label != "Ancient":
+                    continue
+                U = T + 5e4 / 29
+            line, = ax.plot(U, Ne, **kw)
+            records.append(pd.DataFrame(dict(pop=label, years=U, Ne=Ne)))
             c = line.get_c()
             # if label != "Ancient": continue
             from labellines import labelLine, labelLines
@@ -302,19 +335,21 @@ rule plot_unified_merged:
             #     fontsize=8,
             # )
             # ax.text(T[0], Ne[0], label, horizontalalignment="right", verticalalignment="baseline", color=c)
+        full_df = pd.concat(records, ignore_index=True)
+        full_df.to_csv(output[2], index=False)
         lines, labels = ax.get_legend_handles_labels()
-        import matplotlib.lines
-        line = matplotlib.lines.Line2D([],[],alpha=0)
-        lines.insert(0, line)
-        labels.insert(0, '')
-        ax.legend(lines, labels, ncols=2, fontsize=8, loc="lower right")
+        # import matplotlib.lines
+        # line = matplotlib.lines.Line2D([],[],alpha=0)
+        # lines.insert(0, line)
+        # labels.insert(0, '')
+        leg = ax.legend(lines, labels, ncols=2, fontsize=9, loc="upper left")
         ax.set_xscale("log")
         ax.set_yscale("log")
         # ax.set_xlabel("Time")
-        ax.set_xlim(1e2, 1e6)
+        ax.set_xlim(1e2, 3e5)
+        ax.axvspan(813e3/24, 930e3/24, color="grey", edgecolor=None, lw=0, alpha=.25)
 
-
-        ax = axs[0,1]
+        ax = axs[1]
         for k in sorted(["Han", "Papuan", "Yoruba"]):
             dms = load_file(input[k])
             Nes = [
@@ -323,26 +358,27 @@ rule plot_unified_merged:
             Ne, q025, q975 = np.quantile(Nes, [0.5, 0.025, 0.975], axis=0)
             ax.plot(T, Ne, label=k)
             ax.fill_between(T, q025, q975, alpha=0.3)
-        ax.legend(loc="lower right")
+        ax.legend(loc="lower right", fontsize=9)
         # ax.set_xlabel("Time")
 
 
-        ax = axs[1,1]
-        for k in sorted(["Vindija", "Altai", "Denisovan"]):
-            dms = load_file(input[k])
-            Nes = [
-                d.rescale(config["human_mutation_rate"]).eta(T, Ne=True) for d in dms
-            ]
-            Ne, q025, q975 = np.quantile(Nes, [0.5, 0.025, 0.975], axis=0)
-            ax.plot(T, Ne, label=k)
-            ax.fill_between(T, q025, q975, alpha=0.3)
-        ax.legend(loc="lower right")
-        # ax.legend(ncols=3, loc="lower right")
-        # ax.set_xlabel("Time")
+        # ax = axs[1,1]
+        # for k in sorted(["Vindija", "Altai", "Denisovan"]):
+        #     dms = load_file(input[k])
+        #     Nes = [
+        #         d.rescale(config["human_mutation_rate"]).eta(T, Ne=True) for d in dms
+        #     ]
+        #     Ne, q025, q975 = np.quantile(Nes, [0.5, 0.025, 0.975], axis=0)
+        #     ax.plot(T + 5e4 / 29, Ne, label=k)
+        #     ax.fill_between(T + 5e4 / 29, q025, q975, alpha=0.3)
+        # ax.legend(loc="lower right")
+        # # ax.legend(ncols=3, loc="lower right")
+        # # ax.set_xlabel("Time")
 
         trans = mtransforms.ScaledTranslation(-10/72, -7/72, fig.dpi_scale_trans)
-        for ax, lbl in zip(axs.T.reshape(-1), "abcd"):
-            ax.text(1., 1., f"({lbl})", transform=ax.transAxes + trans, horizontalalignment="right", verticalalignment="top")
+        # for ax, lbl in zip(axs.reshape(-1), "abcd"):
+        for i, (ax, lbl) in enumerate(zip(axs, "ab")):
+            ax.text(1., 1., "(" + lbl + ")", transform=ax.transAxes + trans, horizontalalignment="right", verticalalignment="top")
         fig.supxlabel("Time", fontsize=12)
         fig.supylabel("$N_e(t)$", fontsize=12)
         fig.savefig(output[0], bbox_inches="tight")

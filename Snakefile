@@ -24,7 +24,6 @@ mpl.rcParams['text.latex.preamble'] = r'''
 \usepackage{times}
 '''
 
-
 def load_file(path):
     if path.endswith("json"):
         decoder = json
@@ -33,7 +32,7 @@ def load_file(path):
         assert path.endswith("pkl"), path
         decoder = pickle
         mode = "b"
-    with open(path, f"r{mode}") as f:
+    with open(path, "r" + mode) as f:
         return decoder.load(f)
 
 
@@ -45,7 +44,7 @@ def dump_file(obj, path):
         assert path.endswith("pkl")
         encoder = pickle
         mode = "b"
-    with open(path, f"w{mode}") as f:
+    with open(path, "w" + mode) as f:
         encoder.dump(obj, f)
 
 
@@ -64,22 +63,18 @@ rule all:
         input_for_all,
 
 
-for mod in [
-    "unified",
-    "ccr",
-    "sim",
-    "phlash",
-    "psmc",
-    "smcpp",
-    "h2h",
-    "bottleneck",
-    "composite",
-    "fitcoal",
-    "msmc2",
-    "independence",
-    "adna",
-    "misc_plots",
-    "bench"
-]:
-
-    include: f"snakefiles/{mod}"
+include: "snakefiles/unified"
+include: "snakefiles/ccr"
+include: "snakefiles/sim"
+include: "snakefiles/phlash"
+include: "snakefiles/psmc"
+include: "snakefiles/smcpp"
+include: "snakefiles/h2h"
+include: "snakefiles/bottleneck"
+include: "snakefiles/composite"
+include: "snakefiles/fitcoal"
+include: "snakefiles/msmc2"
+include: "snakefiles/independence"
+include: "snakefiles/adna"
+include: "snakefiles/misc_plots"
+include: "snakefiles/bench"

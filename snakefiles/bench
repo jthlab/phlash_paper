@@ -1,6 +1,6 @@
 def input_for_benchmark(wc):
     return [
-        f"h2h/model{i}/rep{j}/n{n}/{method}/bench.txt"
+        "h2h/model{i}/rep{j}/n{n}/{method}/bench.txt".format(i=i,j=j,n=n,method=method)
         for i, _ in enumerate(H2H_PARAMS['models'])
         for j in range(H2H_PARAMS['num_replicates']) 
         for method in H2H_PARAMS['methods']
@@ -9,7 +9,7 @@ def input_for_benchmark(wc):
 
 rule plot_benchmark:
     output:
-        f"{config['figures_path']}/benchmark.pdf"
+        config['figures_path'] + "/benchmark.pdf"
     localrule: True
     run:
         input = input_for_benchmark(None)
@@ -75,12 +75,13 @@ rule plot_benchmark:
         # ax0.set_yscale('log')
         # ax0.legend()
         for i, (m, lbl) in enumerate(H2H_PARAMS['labels'].items()):
+            color = H2H_PARAMS['colors'][m]
             tdm = time_df[time_df['method'] == m]
             # l, = ax1.plot(tdm['n'], tdm['mean_time'], label=lbl1)
-            ax1.errorbar(tdm['n'], tdm['mean_time'], yerr=tdm['std_time'] / np.sqrt(tdm['size_time']), label=lbl)
+            ax1.errorbar(tdm['n'], tdm['mean_time'], yerr=tdm['std_time'] / np.sqrt(tdm['size_time']), label=lbl,color=color)
             mdm = mem_df[mem_df['method'] == m]
             # l, = ax2.plot(mdm['n'], mdm['mean_mem'], label=lbl2)
-            ax2.errorbar(mdm['n'], mdm['mean_mem'], yerr=mdm['std_mem'] / np.sqrt(mdm['size_mem']), label=lbl)
+            ax2.errorbar(mdm['n'], mdm['mean_mem'], yerr=mdm['std_mem'] / np.sqrt(mdm['size_mem']), label=lbl,color=color)
         ax1.set_yscale('log')
         ax2.set_yscale('log')
         ax1.set_ylabel("CPU (Mins./Gbp)")

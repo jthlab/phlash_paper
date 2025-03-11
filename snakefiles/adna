@@ -35,39 +35,30 @@ def filtered_het_matrix(chrom_path, window_size):
     ancient_nodes = np.concatenate(list(ancient_samples_d.values()))
     L = chrom.sequence_length
     w = window_size
-    het_matrix = np.zeros([len(ancient_nodes), int(L // w + 1)], dtype=np.int8)
+    het_matrix = np.zeros([len(ancient_nodes), int(L // w + 1), 2], dtype=np.int8)
+    het_matrix[..., 0] = w
     A = np.array(tskit.ALLELES_ACGT)
     I = np.arange(2 * chrom.num_individuals)
     # all the modern samples have node ids < 7508
     # modern_mask = np.all(I[:, None, None] != ancient_nodes[None], (1, 2))
     modern_mask = slice(None, 7508, None)
     ancient_mask = slice(7508, None, None)
-    DEAM = {frozenset({"C", "T"}), frozenset({"A", "G"})}
+    TI = {frozenset({"C", "T"}), frozenset({"A", "G"})}
     sample_sets = [a.reshape(-1).tolist() for a in ancient_samples_d.values()]
     afs_tensor = chrom.allele_frequency_spectrum(
         sample_sets=sample_sets, span_normalise=False, polarised=True
     )
     K = len(ancient_samples_d)
-    afss = [afs_tensor.sum(axis=tuple([j for j in range(K) if j != i]))[1:-1] for i in range(K)]
+    afss = [afs_tensor.sum(axis=tuple([j for j in range(K) if j != i])) for i in range(K)]
     for v in chrom.variants(alleles=tskit.ALLELES_ACGT):
-        if len(np.unique(v.genotypes)) > 2:
-            # restrict to biallelic for simplicity
-            continue
-        a = v.site.ancestral_state
-        adna_gt = A[v.genotypes[ancient_mask]]
-        if np.all(adna_gt == a):
-            continue
-        b = adna_gt[adna_gt != a].reshape(-1)[0]
-        key = frozenset({a, b})
-        deam = key in DEAM
-        modern_maf = (A[v.genotypes[modern_mask]] != a).sum()
-        if DEAM and modern_maf <= 5:
+        key = frozenset([v.alleles[g] for g in v.genotypes])
+        if len(key) > 2 or key in TI:
             continue
         ell = int(v.position / w)
         g = v.genotypes[ancient_nodes]
-        het_matrix[:, ell] += g[:, 0] != g[:, 1]
+        het_matrix[:, ell, 1] += g[:, 0] != g[:, 1]
     ret = {
-        pop: {"het_matrix": H.clip(-1, 1), "afs": a}
+        pop: {"hets": H, "afs": {(a.shape[0] - 1,): a}}
         for pop, H, a in zip(
             ancient_samples_d.keys(), np.split(het_matrix, np.arange(4, 8)), afss
         )
@@ -82,8 +73,8 @@ rule adna_config_for_phlash_unified:
         "adna/{population}/unfiltered/phlash/config.pkl",
     run:
         params = {
-            "test_data": (input[0], None),
-            "train_data": [(i, None) for i in input[1:]],
+            "test_data": input[0],
+            "train_data": input[1:],
             "mutation_rate": config["human_mutation_rate"],
             "fold_afs": True,
         }
@@ -98,8 +89,8 @@ rule adna_config_for_phlash:
     localrule: True
     run:
         params = {
-            "test_data": (input[0], None),
-            "train_data": [(i, None) for i in input[1:]],
+            "test_data": input[0],
+            "train_data": input[1:],
             "mutation_rate": config["human_mutation_rate"],
             "fold_afs": True,
         }
@@ -109,16 +100,17 @@ rule adna_config_for_phlash:
 rule adna_unified_filtered:
     output:
         **{
-            population: f"adna/{population}/chr{{chrom}}.filtered.pkl"
+            population: "adna/" + population + "/chr{chrom}.filtered.pkl"
             for population in ADNA_CONFIG["ancient_samples"]
         },
     resources:
         mem_mb=16000,
+        runtime=240,
     run:
         chrom_path = path_for_unified_chrom(wildcards.chrom)
         fhm_d = filtered_het_matrix(chrom_path, 100)
         for pop, d in fhm_d.items():
-            rc = Contig(**d, window_size=100)
+            rc = Contig(**d, ld=None, window_size=100)
             outpath = output[pop]
             dump_file(rc, outpath)
 
@@ -146,12 +138,11 @@ rule plot_adna:
         estimates=expand(
             "adna/{population}/{un}filtered/phlash/estimates.pkl",
             population=ADNA_CONFIG["ancient_samples"],
-	    un=["", "un"],
+            un=["", "un"],
         ),
         mutation_counts="adna/deamination.pkl"
     localrule: True
     output:
-    	**{k: f"{config['figures_path']}/adna/{k}.pdf"
-	for k in ['main', 'combined']}
+        **{k: config['figures_path'] + "/adna/" + k + ".pdf" for k in ['main', 'combined']}
     script:
         "../notebooks/adna.py"

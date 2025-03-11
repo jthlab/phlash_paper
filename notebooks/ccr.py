@@ -41,9 +41,9 @@ except NameError:
     ]
     output = "/dev/null"
 
-POPS = ["YRI", "CHB", ("YRI", "CHB")]
+POPS = ["YRI", "CHB", ("YRI", "CHB"), "merged"]
 input_d = {k: dict(zip(POPS, getattr(input_, k)))
-           for k in ("real", "simulated")}
+           for k in ("real", "simulated")[:1]}
 
 # +
 # compute ccr curves for real and simulated data
@@ -61,7 +61,7 @@ T = np.geomspace(1e1, 1e5, 1000)
 import stdpopsim
 model = stdpopsim.get_species("HomSap").get_demographic_model("OutOfAfrica_3G09")
 dms = {}
-for k in ["real", "simulated"]:
+for k in ["real", "simulated"][:1]:
     d = dms[k] = {}
     for pop, file in input_d[k].items():
         d[pop] = pickle.load(open(file, "rb"))
@@ -69,7 +69,7 @@ for k in ["real", "simulated"]:
             d[pop] = [dm.rescale(model.mutation_rate) for dm in d[pop]]
 
 # +
-ccrs = {"real": [], "simulated": []}
+ccrs = {"real": []}
 
 for k in ccrs:
     for _ in range(1000):
@@ -82,13 +82,13 @@ for k in ccrs:
 
 # +
 # compute ratio curves for real and simulated data
-ratios = {"real": [], "simulated": []}
+ratios = {"real": []}
 
 for k in ratios:
     for _ in range(1000):
         dms_i = {pop: v[rng.choice(len(v))] for pop, v in dms[k].items()}
-        Ne1, Ne2 = [dms_i[k].eta(T, Ne=True) for k in ("YRI", "CHB")]
-        x = (Ne1 / Ne2 + Ne2 / Ne1)
+        Ne1, Ne2, Ne_comb = [dms_i[k].eta(T) for k in ("YRI", "CHB", "merged")]
+        x = Ne_comb / (.5 * (Ne1 + Ne2))
         ratios[k].append(x)
 
 
@@ -116,16 +116,16 @@ import matplotlib.gridspec as gridspec
 # but the second column is twice as wide as the first one
 # fig, axs = plt.subplots(ncols=3, sharey=True, figsize=(6.5, 2.5), layout="constrained")
 # (ax2, ax1, ax3) = axs
-fig = plt.figure(figsize=(6.5, 2.5), layout="constrained")
-axd = fig.subplot_mosaic("ABC", sharey=True, width_ratios=[2, 2, 1])
-ax2 = axd["A"]
+fig = plt.figure(figsize=(4.5, 2.5), layout="constrained")
+axd = fig.subplot_mosaic("BC", sharey=True, width_ratios=[2, 1])
+# ax2 = axd["A"]
 ax1 = axd["B"]
 ax3 = axd["C"]
 # Subplots
 # fig, axs = plt.subplots(nrows=2, sharex=True)
 rng = np.random.default_rng(1)
-for d, ax in zip((ccrs, ratios), (ax2, ax1)):
-    for k in d:
+for d, ax in list(zip((ccrs, ratios), (None, ax1)))[1:]:
+    for k in ["real"]:
         data = d[k]
         label = k.title()
         (line,) = ax.plot(np.median(data, 0), T, label=label)
@@ -138,7 +138,7 @@ for d, ax in zip((ccrs, ratios), (ax2, ax1)):
         ax.set_yscale("log")
 
 
-ax1.legend()
+# ax1.legend()
 import demesdraw
 import stdpopsim
 
@@ -150,16 +150,16 @@ G = (
 cmap = dict(zip(["YRI", "CEU", "CHB"], ['#0C5DA5', '#00B945', '#FF9500']))
 demesdraw.tubes(G, ax=ax3, colours=cmap, log_time=True, max_time=1e5)
 ax1.set_ylim(2e1, 1e5)
-ax1.set_xlabel(r"$N_{\text{YRI}}/N_{\text{CHB}} + N_{\text{CHB}}/N_{\text{YRI}}$")
+ax1.set_xlabel(r"$\frac{2\eta_{\text{Combined}}}{\eta_{\text{YRI}} + \eta_{\text{CHB}}}$")
 # ax1.set_title("Ratio")
 # ax2.set_title("CCR")
 # ax1.title.set_position((0.5, 0.97))
 # ax2.title.set_position((0.5, 0.97))
-for ax in ax1, ax2:
+for ax in (ax1, None)[:1]:
     ax.fill_between(ax.get_xlim(), 848, 5000, color="grey", alpha=0.15, linewidth=0)
-ax2.set_ylabel("Time (generations)")
-ax2.set_xlabel("YRI/CHB Cross-Coalescent Rate")
-ax1.set_ylabel("")
+#$ ax2.set_ylabel("Time (generations)")
+#$ ax2.set_xlabel(r"$\frac{2\eta_{\text{Between}}}{\eta_{\text{YRI}} + \eta_{\text{CHB}}}$ (CCR)")
+# ax1.set_ylabel("")
 ax3.set_ylabel("")
 ax3.yaxis.set_visible(False)
 ax3.tick_params(
@@ -175,7 +175,8 @@ for d in ["top", "right", "left", "bottom"]:
 # ax3.set_position(new_pos) # Set new position
 
 import matplotlib.transforms as mtransforms
-for label, ax in zip('abc', [ax2, ax1, ax3]):
+# for label, ax in zip('abc', [ax2, ax1, ax3]):
+for label, ax in zip('ab', [ax1, ax3]):
 # label physical distance in and down:
     x = {'a': 7/72, 'b': -20/72, 'c': 13/72}[label]
     trans = mtransforms.ScaledTranslation(x, -5/72, fig.dpi_scale_trans)

@@ -67,7 +67,7 @@ rule bneck_phlash_config:
         ret["test_data"] = (input.bcf[0], samples)
         ret["train_data"] = [(path, samples) for path in input.bcf[1:]]
         ret["mutation_rate"] = stdpopsim.get_species("HomSap").genome.mean_mutation_rate
-	ret["options"] = {"N0": 1e4}
+        ret["options"] = {"N0": 1e4}
         dump_file(ret, output[0])
 
 

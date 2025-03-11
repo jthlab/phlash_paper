@@ -18,11 +18,11 @@ def process_chrom(conf_entry):
     path = conf_entry[0]
     if path.endswith(".tsz"):
         path, nodes = conf_entry
-        return phlash.contig(path, nodes)
+        return phlash.Contig.from_ts(path, nodes)
     elif path.endswith(".bcf"):
         path, samples = conf_entry
         region = region_for_vcf(path)
-        return phlash.contig(path, samples=samples, region=region)
+        return phlash.Contig.from_vcf(vcf_path, samples=samples, region=region)
     elif path.endswith(".pkl"):
         contig = load_file(path)
         assert isinstance(contig, phlash.data.Contig)
@@ -38,14 +38,10 @@ def _phlash_random_account(wc):
 
 
 def _phlash_mem(wc, input, attempt):
-    config = load_file(input[0])
-    try:
-        _, samples = config['test_data']
-        if len(samples) > 200:
-            return 128000
-    except:
-        pass
-    return [16000, 32000, 47000][attempt - 1]
+    cfg = load_file(input[0])
+    if cfg.get("n", 100) > 10:
+        return 128000
+    return 16000
 
 rule phlash_estimate:
     input:
@@ -54,8 +50,7 @@ rule phlash_estimate:
         "{analysis}/phlash/estimates.pkl",
     benchmark:
         "{analysis}/phlash/bench.txt"
-    threads: 4
-    retries: 3
+    threads: 2
     resources:
         mem_mb=_phlash_mem,
         gpus=1,
@@ -63,4 +58,4 @@ rule phlash_estimate:
         slurm_partition="gpu,gpu_mig40,spgpu",
         slurm_extra="--gpus 1",
     shell:
-        f"{config['basedir']}/scripts/phlash.sh '{{input}}' '{{output}}'"
+        config['basedir'] + "/scripts/phlash.sh '{input}' '{output}'"

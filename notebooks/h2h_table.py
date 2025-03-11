@@ -14,12 +14,17 @@
 
 import pandas as pd
 import numpy as np
+import sys
 import tempfile
 import shutil
 
 import pickle
-df = pickle.load(open(snakemake.input[0], 'rb'))
+try:
+    df = pickle.load(open(snakemake.input[0], 'rb'))
+except:
+    df = pickle.load(open(sys.argv[1], 'rb'))
 
+df = df.drop(columns=['eld', 'old', 'esfs', 'obsfs'])
 df['l2'] = df['l2'].astype(float)
 
 df['method'] = pd.Categorical(df['method'], categories=['smcpp', 'msmc2', 'phlash', 'fitcoal'])
@@ -28,16 +33,23 @@ df_mean_std = df.melt(id_vars=['model', 'method', 'n', 'rep'], var_name='metric'
     ['model', 'n', 'metric'])
 df_mean_std.sort_index(inplace=True)
 df_mean_std.loc[('Africa_1T12', 1, 'l2')]
+df_mean_std['value'] = df_mean_std['value'].astype(float)
 
-SE = snakemake.output[0].endswith("_sd.tex")
+try:
+    outfile = snakemake.output[0]
+except:
+    outfile = sys.argv[2]
+
+
+SE = outfile.endswith("_sd.tex")
 
 if SE:
     sts = ['sem']
 else:
     sts = ['mean']
-summary_df = df.groupby(['model', 'n', 'method']).agg({k: sts for k in ['l2', 'tv1', 'tvn']})
+summary_df = df.groupby(['model', 'n', 'method']).agg({k: sts for k in ['l2', 'tv1', 'sfs', 'ld']})
 
-s2 = summary_df.pivot_table(values=['l2', 'tv1', 'tvn'], index=['model', 'n'], columns='method')
+s2 = summary_df.pivot_table(values=['l2', 'tv1', 'sfs', 'ld'], index=['model', 'n'], columns='method')
 
 s2.columns = s2.columns.set_names(['metric', 'stat', 'method'])
 
@@ -83,8 +95,6 @@ def f(x):
         if np.isnan(v):
             ret.append("---")
         else:
-            if v > 1:
-                v /= 1e8
             s = f"{v:.3g}"
             if "e" in s:  # scientific notation was chosen
                 s = f"{v:.5f}"
@@ -108,10 +118,18 @@ s3 = s3.rename(columns={'phlash': r'\textsc{phlash}', 'smcpp': r"\textsc{SMC}\te
 
 
 import subprocess
-k = snakemake.wildcards.metric.split("_")[0]
-err = dict([("l2", "$L^2$"), ("tv1", "total variation"), ("tvn", r"$\mathrm{TV}_n$")])[k]
+try:
+    k = snakemake.wildcards.metric.split("_")[0]
+except:
+    k = "sfs"
+err = dict([("l2", "$L^2$"), ("tv1", "total variation"), ("sfs", r"SFS"), ("ld", "LD")])[k]
 s4 = s3.loc[:, (k,)]
+
+if k in ("sfs", "ld"):
+    s4 = s4[s4.index.get_level_values('$n$') != r'\texttt{1}']
+
 s4.columns.name = None
+    
 if SE:
     cap = f"Standard errors for {err} error."
 else:
@@ -119,7 +137,7 @@ else:
 if err == "l2":
     cap += " (Errors have been divided by $10^8$.)"
 latex_str = s4.style.to_latex(hrules=True, clines="skip-last;data", environment="footnotesize")
-with open(snakemake.output[0], "wt") as f:
+with open(outfile, "wt") as f:
     f.write(latex_str)
 latex_document = f"""
 \\documentclass{{article}}
@@ -132,7 +150,7 @@ latex_document = f"""
 """
 # td = tempfile.TemporaryDirectory()
 # p = td.name + f"/table_{k}.tex"
-p = snakemake.output[0][:-3] + "full.tex"
+p = outfile[:-3] + "full.tex"
 with open(p, "wt") as f:
     f.write(latex_document)
 # subprocess.run(["pdflatex", p])

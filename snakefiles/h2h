@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import tqdm.auto as tqdm
@@ -8,7 +9,10 @@ import matplotlib.transforms as mtransforms
 from functools import cache
 
 import cyvcf2
+import jax
 import stdpopsim
+import phlash
+import phlash.ld.expected
 
 from phlash.sim import _get_N0, _find_stdpopsim_model
 
@@ -57,6 +61,8 @@ H2H_PARAMS['labels'] = {'smcpp': r'\textsc{smc}\texttt{++}', 'msmc2': r'\textsc{
 def get_default_mutation_rate(species_name):
     return stdpopsim.get_species(species_name).genome.mean_mutation_rate
 
+def get_default_recombination_rate(species_name, chrom):
+    return stdpopsim.get_species(species_name).get_contig(chrom).recombination_map
 
 def get_genome_length(species_name):
     species = stdpopsim.get_species(species_name)
@@ -84,11 +90,12 @@ def get_truth(species_name, demographic_model, population):
         pop_dict = {population: 2}
     c, _ = md.coalescence_rate_trajectory(t, pop_dict)
     eta = SizeHistory(t=t, c=c)
-    true_dm = DemographicModel(eta=eta, theta=mu, rho=None)
+    true_dm = DemographicModel(eta=eta, theta=mu / 2, rho=None)
     return true_dm
 
 
 rule h2h_N0:
+    localrule: True
     output:
         r"h2h/model{i}/N0.pkl",
     run:
@@ -191,38 +198,52 @@ rule h2h_config_for_smcpp:
 ## PHLASH
 
 
-def input_for_phlash_config(wc):
-    n = int(wc.n)
-    big = "big/" if n == 1000 else ""
-    ret = {
-        "bcf": [
-            ancient(f"h2h/model{{i}}/rep{{j}}/{big}simulations/chr{chrom}.bcf")
-            for chrom in h2h_chroms_for(wc)
-        ]
-    }
-    ret["csi"] = [f + ".csi" for f in ret["bcf"]]
-    return ret
+rule h2h_phlash_process_chrom:
+    input:
+        ["h2h/model{i}/rep{j}/simulations/chr{chrom}.bcf",
+        "h2h/model{i}/rep{j}/simulations/chr{chrom}.bcf.csi"]
+    output:
+        r"h2h/model{i}/rep{j}/n{n}/phlash/data/chr{chrom}.pkl"
+    threads: 8
+    resources:
+        runtime=120
+    run:
+        jax.config.update('jax_platforms', 'cpu')
+        def _chrom_size(bcf):
+            return cyvcf2.VCF(bcf).seqlens[0]
+        n = int(wildcards.n)
+        samples = ["sample" + str(i) for i in range(n)]
+        interval = (1, _chrom_size(input[0]))
+        i = int(wildcards.i)
+        species, _, _ = H2H_PARAMS["models"][i]
+        if n > 2:
+            r = get_default_recombination_rate(species, wildcards.chrom)
+        else:
+            r = None
+        c = phlash.Contig.from_vcf(vcf_path=input[0], sample_ids=samples,
+            contig=wildcards.chrom, interval=interval, genetic_map=r)
+        dump_file(c, output[0])
 
+
+def input_for_phlash_config(wc):
+    return ["h2h/model{i}/rep{j}/n{n}/phlash/data/chr" + chrom + ".pkl" for chrom in h2h_chroms_for(wc)]
 
 rule h2h_config_for_phlash:
     input:
-        unpack(input_for_phlash_config),
+        input_for_phlash_config
     output:
         r"h2h/model{i}/rep{j}/n{n}/phlash/config.pkl",
     localrule: True
     run:
         def _chrom_size(bcf):
             return cyvcf2.VCF(bcf).seqlens[0]
-
-
-        chroms_sorted = sorted(input.bcf, key=_chrom_size)
-        test_chrom = chroms_sorted[0]
-        train_chroms = chroms_sorted[1:]
+        test_chrom = input[0]
+        train_chroms = input[1:]
         n = int(wildcards.n)
-        samples = [f"sample{i}" for i in range(n)]
         ret = {}
-        ret["test_data"] = (test_chrom, samples)
-        ret["train_data"] = [(chrom, samples) for chrom in train_chroms]
+        ret["n"] = n
+        ret["test_data"] = test_chrom
+        ret["train_data"] = train_chroms
         i = int(wildcards.i)
         species, _, _ = H2H_PARAMS["models"][i]
         ret["mutation_rate"] = get_default_mutation_rate(species)
@@ -297,12 +318,12 @@ def input_for_h2h_figure(wc):
     i = int(wc.i)
     n = int(wc.n)
     if n == 1000:
-        return {"phlash": [f"h2h/model{i}/rep0/n1000/phlash/estimates.pkl"]}
+        return {"phlash": ["h2h/model{i}/rep0/n1000/phlash/estimates.pkl".format(i=i)]}
     ret = {}
     for method in H2H_PARAMS["methods"]:
         if n in H2H_PARAMS["limits"].get(method, H2H_PARAMS["sample_sizes"]):
             ret[method] = [
-                f"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl"
+                "h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl".format(i=i,j=j,n=n)
                 for j in range(H2H_PARAMS["num_replicates"])
             ]
     return ret
@@ -312,7 +333,7 @@ rule h2h_figure:
     input:
         unpack(input_for_h2h_figure),
     output:
-        f"{config['figures_path']}/h2h/model{{i}}.n{{n}}.pdf",
+        config['figures_path'] + "/h2h/model{i}.n{n}.pdf"
     localrule: True
     run:
         T = H2H_PARAMS["T"]
@@ -360,8 +381,8 @@ def every_h2h_input_base():
                     if n in H2H_PARAMS["limits"].get(
                         method, H2H_PARAMS["sample_sizes"]
                     ):
-                        yield f"h2h/model{i}/rep{j}/n{n}/{method}"
-        yield f"h2h/model{i}/rep0/n1000/phlash"
+                        yield "h2h/model{i}/rep{j}/n{n}/{method}".format(i=i,j=j,n=n,method=method)
+        # yield f"h2h/model{i}/rep0/n1000/phlash"
 
 
 def input_for_h2h_figure_combined(wc):
@@ -375,7 +396,7 @@ rule h2h_figure_combined:
     input:
         input_for_h2h_figure_combined,
     output:
-        f"{config['figures_path']}/h2h/combined{{i,\\d+}}.pdf",
+        config['figures_path'] + r"/h2h/combined{i,\d+}.pdf"
     localrule: True
     run:
         T = H2H_PARAMS["T"]
@@ -393,7 +414,7 @@ rule h2h_figure_combined:
         mdls = sorted(models, key=keyfun)[3 * i : 3 * i + 3]
         fig, axss = plt.subplots(
             nrows=3,
-            ncols=4,
+            ncols=3,
             figsize=(11 - 1, 8.5 - 1.5),
             dpi=300,
             sharex=True,
@@ -401,14 +422,14 @@ rule h2h_figure_combined:
         )
         for mdl, (ax_i, axs) in zip(mdls, enumerate(axss)):
             i = models.index(mdl)
-            for n, (ax_j, ax) in zip([1, 10, 100, 1000], enumerate(axs)):
+            for n, (ax_j, ax) in zip([1, 10, 100], enumerate(axs)):
                 truth = get_truth(*mdl)
                 cm = H2H_PARAMS["colors"]
                 ax.plot(T, truth.eta(T, Ne=True), color="black")
                 for method in H2H_PARAMS["methods"]:
-                    if n in H2H_PARAMS["limits"].get(method, [1, 10, 100, 1000]):
+                    if n in H2H_PARAMS["limits"].get(method, [1, 10, 100]):
                         paths = [
-                            f"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl"
+                            "h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl".format(i=i,j=j,n=n,method=method)
                             for j in range(H2H_PARAMS["num_replicates"])
                         ]
                         if n == 1000:
@@ -467,12 +488,12 @@ rule h2h_figure_combined:
                 ax.set_xscale("log")
                 ax.set_yscale("log")
         ax.set_xlim(1e1, 1e6)
-        for i, n in enumerate([1, 10, 100, 1000]):
-            axss[0, i].set_title(f"$n={n}$", fontsize=12)
+        for i, n in enumerate([1, 10, 100]):
+            axss[0, i].set_title("$n={n}$".format(n=n), fontsize=12)
         trans = mtransforms.ScaledTranslation(5/72, 5/72, fig.dpi_scale_trans)
         for j, mdl in enumerate(map(keyfun, mdls)):
             y, _ = axss[j, 0].get_ylim()
-            axss[j, 0].text(0., 0., r"\texttt{" + f"{mdl[0]}/{mdl[1]}" + "}", transform=axss[j, 0].transAxes + trans, fontsize=8)
+            axss[j, 0].text(0., 0., r"\texttt{" + mdl[0] + "/" + mdl[1] + "}", transform=axss[j, 0].transAxes + trans, fontsize=8)
         axss[-1, 0].set_ylabel("$N_e(t)$")
         axss[-1, 0].set_xlabel("Time")
         fig.tight_layout()
@@ -485,14 +506,57 @@ def _mdl_keyfun(mdl):
         return mdl
     return (species, "Constant", pop)
 
+def _calc_ld(eta, theta, ld_buckets):
+    eld = jax.vmap(lambda r: phlash.ld.expected.expected_ld(eta, r, theta))
+    # return dict(zip(ld_buckets, np.array(eld(ld_buckets))))
+    e = eld(ld_buckets)["D2/pi2"]
+    return np.mean([e[:-1], e[1:]], 0)
+
+rule h2h_expected_ld:
+    output:
+        "h2h/model{i}/ld.pkl"
+    run:
+        jax.config.update('jax_platforms', 'cpu')
+        i = int(wildcards.i)
+        mdl = H2H_PARAMS["models"][i]
+        truth = get_truth(*mdl)
+        ld_buckets = np.geomspace(1e-6, 5e-3, 16)
+        ret = _calc_ld(truth.eta, truth.theta)
+        dump_file(ret, output[0])
+
+rule h2h_observed_ld:
+    input:
+        "h2h/model{i}/rep{j}/n{n}/phlash/config.pkl",
+    output:
+        "h2h/model{i}/rep{j}/n{n}/ld_afs.pkl"
+    run:
+        jax.config.update('jax_platforms', 'cpu')
+        cfg = load_file(input[0])
+        d = {}
+        e = {}
+        for f in cfg['train_data']:
+            c = load_file(f)
+            if c.ld is not None:
+                for k, v in c.ld.items():
+                    d.setdefault(k, []).extend(v)
+            if c.afs is not None:
+                for k, v in c.afs.items():
+                    k = tuple(map(int, k))
+                    e.setdefault(k, np.zeros_like(v))
+                    e[k] += v
+        for k in d:
+            d[k] = np.mean(d[k], axis=0)
+        dump_file({'ld': d, 'afs': e}, output[0])
 
 rule h2h_table_error_entry:
     input:
         r"h2h/model{i}/rep{j}/n{n}/{method}/estimates.pkl",
+        r"h2h/model{i}/rep{j}/n{n}/ld_afs.pkl",
     output:
         r"h2h/model{i}/rep{j}/n{n}/{method}/error.pkl",
-    localrule: True
+    localrule: False
     run:
+        jax.config.update('jax_platforms', 'cpu')
         i = int(wildcards.i)
         j = int(wildcards.j)
         n = int(wildcards.n)
@@ -500,6 +564,7 @@ rule h2h_table_error_entry:
         mdl = H2H_PARAMS["models"][i]
         truth = get_truth(*mdl)
         dm = load_file(input[0])
+        eld_afs = load_file(input[1])
         if method == "phlash":
             t = np.array(
                 sorted({float(ti) for d in dm for ti in d.rescale(truth.theta).eta.t})
@@ -516,10 +581,25 @@ rule h2h_table_error_entry:
         ret["n"] = n
         tvs = [float(truth.eta.tv(eta, i)) for i in range(1, n + 1)]
         ret["tv1"] = tvs[0]
-        ret["tvn"] = np.mean(tvs)
-        ret["l2"] = truth.eta.l2(eta, 1e6)
+        # ret["tvn"] = np.mean(tvs)
+        ret["l2"] = truth.eta.l2(eta, 1e6, log=True)
+        tr = phlash.size_history.SizeHistory(c=truth.eta.c, t=truth.eta.t)
+        esfs = eld_afs['afs'][(2 * n,)][1:-1]
+        esfs = esfs / esfs.sum()
+        eta = phlash.size_history.SizeHistory(c=eta.c, t=eta.t)
+        obsfs = eta.etbl(2 * n)
+        obsfs = obsfs / obsfs.sum()
+        ret["esfs"] = esfs
+        ret["obsfs"] = obsfs
+        ret["sfs"] = abs(esfs - obsfs).sum() / 2.
+        eld = eld_afs['ld']
+        ld_buckets = np.array(sorted({x for k in eld for x in k}))
+        old = _calc_ld(eta, truth.theta, ld_buckets)
+        ret["eld"] = eld
+        ret["old"] = old
+        eld = np.array([eld[k][0] for k in sorted(eld)])
+        ret["ld"] = np.mean((eld - old) ** 2)
         dump_file(ret, output[0])
-
 
 def input_for_h2h_table(wc):
     for f in every_h2h_input_base():
@@ -533,6 +613,9 @@ rule h2h_table_df:
     localrule: True
     run:
         records = list(map(load_file, input))
+        for r in records:
+            for k in ('l2', 'sfs', 'tv1', 'ld'):
+                r[k] = float(r[k])
         df = pd.DataFrame.from_records(records)
         dump_file(df, output[0])
 
@@ -541,14 +624,14 @@ rule h2h_table_k:
     input:
         "tables/h2h.df.pkl",
     output:
-        f"{config['figures_path']}/../tables/table_{{metric}}.tex"
+        config['figures_path'] + "/../tables/table_{metric}.tex"
     localrule: True
     script:
         "../notebooks/h2h_table.py"
 
 rule h2h_tables:
     input:
-        expand(f"{config['figures_path']}/../tables/table_{{k}}.tex", k=['l2', 'tv1', 'tvn', 'l2_sd', 'tv1_sd', 'tvn_sd'])
+        expand(config['figures_path'] + "/../tables/table_{k}.tex", k=['l2', 'tv1', 'sfs', 'ld', 'l2_sd', 'tv1_sd', 'sfs_sd', 'ld_sd'])
 
 # localrule h2h_figure_combined_big:
 #     input:
@@ -559,22 +642,93 @@ rule h2h_tables:
 
 rule plot_all_h2h_combined:
     input:
-        [f"{config['figures_path']}/h2h/combined{i}.pdf" for i in range(4)]
+        [config['figures_path'] + "/h2h/combined" + str(i) + ".pdf" for i in range(4)]
 
 
 rule plot_all_h2h:
     input:
         [
-            f"{config['figures_path']}/h2h/model{i}.n{n}.pdf"
+            os.path.join(
+                config['figures_path'],
+                'h2h',
+                'model' + str(i) + ".n" + str(n) + ".pdf"
+            )
             for i in range(len(H2H_PARAMS["models"]))
             for n in H2H_PARAMS["sample_sizes"]
         ]
-        + [
-            f"{config['figures_path']}/h2h/model{i}.n1000.pdf"
-            for i in range(len(H2H_PARAMS["models"]))
-        ]
-        + [f"{config['figures_path']}/h2h/combined{i}.pdf" for i in range(4)]
+        + [config['figures_path'] + "/h2h/combined" + str(i) + ".pdf" for i in range(4)]
 
+rule plot_h2h_figure_combined_everything_phlash:
+    input:
+        input_for_h2h_figure_combined,
+    output:
+        config['figures_path'] + "/h2h/combined_everything_phlash.pdf"
+    localrule: True
+    run:
+        T = H2H_PARAMS["T"]
+        models = H2H_PARAMS["models"]
+
+
+        def keyfun(mdl):
+            species, dm, pop = mdl
+            if isinstance(dm, str):
+                return mdl
+            return (species, "Constant", pop)
+
+
+        mdls = sorted(models, key=keyfun)
+        fig, axs = plt.subplots(
+            nrows=4,
+            ncols=12,
+            figsize=(11 - 1, 8.5 - 1),
+            dpi=150,
+            sharex=True,
+            sharey=True,
+            layout="constrained",
+        )
+
+        for n, (ax_i, ax_row) in zip([1, 10, 100], enumerate(axs)):
+            for mdl, (ax_j, ax) in zip(mdls, enumerate(ax_row)):
+                ax.set_ylim(1e3, 1e7)
+                i = models.index(mdl)
+                if ax_i == 0:
+                    ax.set_title(keyfun(mdl)[1], fontsize=8)
+                truth = get_truth(*mdl)
+                cm = H2H_PARAMS["colors"]
+                ax.plot(T, truth.eta(T, Ne=True), color="black")
+                num_reps = 1 if n == 1000 else 3
+                paths = [
+                    "h2h/model{i}/rep{j}/n{n}/phlash/estimates.pkl".format(i=i,j=j,n=n)
+                    for j in range(num_reps)
+                ]
+                qs = []
+                for path in paths:
+                    dm = load_file(path)
+                    qs.append(np.quantile(
+                            [
+                                d.rescale(truth.theta).eta(T, Ne=True)
+                                for d in dm
+                            ],
+                            [0.025, 0.5, 0.975],
+                            axis=0,
+                        )
+                    )
+                qs_avg = np.mean(qs, 0)
+                ax.plot(
+                    T,
+                    qs_avg[1],
+                    color='tab:blue',
+                )
+                ax.fill_between(T, qs_avg[0], qs_avg[2], color='tab:blue', alpha=0.3)
+                ax.set_xscale("log")
+                ax.set_yscale("log")
+        for j in range(4):
+            ax = axs[j, -1].twinx()
+            ax.set_ylabel("$n=10^{j}$".format(j=j), rotation=-90, labelpad=7)
+            ax.set_yticklabels([])
+        fig.supxlabel("Time")
+        fig.supylabel("$N_e$")
+        fig.savefig(output[0], bbox_inches="tight")
 
 # ALL_OUTPUT.append(rules.plot_all_h2h.input)
 ALL_OUTPUT.append("tables/h2h.df.pkl")

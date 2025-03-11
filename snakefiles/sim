@@ -65,7 +65,7 @@ rule index_bcf:
     output:
         "{analysis}/{file}.bcf.csi",
     shell:
-        f"{config['bcftools_path']} index {{input}}"
+        config['bcftools_path'] + " index {input}"
 
 rule simulate_stdpopsim_scrm:
     input:
@@ -87,7 +87,7 @@ rule scrm_to_bcf:
     resources:
         runtime=10
     shell:
-        f"{config['basedir']}/scripts/scrm2bcf.sh {{wildcards.chrom}} {{input.scrm_out}} {{output}}"
+        config['basedir'] + "/scripts/scrm2bcf.sh {wildcards.chrom} {input.scrm_out} {output}"
 
 
 rule simulate_stdpopsim_ts:

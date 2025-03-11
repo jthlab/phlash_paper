@@ -10,7 +10,7 @@ rule msmc2_multihetsep:
     output:
         r"{analysis}/n{n}/chr{chrom}.multihetsep.txt"
     shell:
-    	f"{config['basedir']}/scripts/multihetsep.sh {{input}} {{wildcards.n}} > {{output}}"
+        config['basedir'] + "/scripts/multihetsep.sh {input} {wildcards.n} > {output}"
 
 
 def _is_large(wc):
@@ -27,14 +27,14 @@ rule run_msmc2:
     resources:
         slurm_partition=lambda wc: "largemem" if _is_large(wc) else "standard",
         mem_mb=lambda wc: 256000 if _is_large(wc) else 128000,
-	runtime=1440,
+        runtime=1440,
     run:
         n = int(wildcards.n)
         pairs = ",".join(f"{2 * i}-{2 * i + 1}" for i in range(n))
         params = load_file(input[0])
-	outdir = os.path.dirname(output[0])
-	hets = " ".join(params['multihet_seps'])
-	shell(f"{config['basedir']}/lib/msmc2_Linux -o {outdir}/output -I {pairs} -t4 {hets}")
+        outdir = os.path.dirname(output[0])
+        hets = " ".join(params['multihet_seps'])
+        shell(f"{config['basedir']}/lib/msmc2_Linux -o {outdir}/output -I {pairs} -t4 {hets}")
 
 rule msmc2_to_dm:
     input: 
@@ -43,13 +43,13 @@ rule msmc2_to_dm:
     output: "{analysis}/msmc2/estimates.pkl"
     run:
         params = load_file(input.params)
-	mu = params['mutation_rate']
+        mu = params['mutation_rate']
         df = pd.read_csv(input.msmc2_output, sep="\t")
-	# scaling is from: 
-	# https://github.com/stschiff/msmc-tools/blob/master/msmc-tutorial/guide.md#plotting-in-r
-	t = df['left_time_boundary'].to_numpy() / mu
-	Ne = 1 / df['lambda'].to_numpy() / (2 * mu)
-	c = 1 / 2 / Ne
-	eta = SizeHistory(t=t, c=c)
-	dm = DemographicModel(eta=eta, theta=mu, rho=None)
-	dump_file(dm, output[0])
+        # scaling is from: 
+        # https://github.com/stschiff/msmc-tools/blob/master/msmc-tutorial/guide.md#plotting-in-r
+        t = df['left_time_boundary'].to_numpy() / mu
+        Ne = 1 / df['lambda'].to_numpy() / (2 * mu)
+        c = 1 / 2 / Ne
+        eta = SizeHistory(t=t, c=c)
+        dm = DemographicModel(eta=eta, theta=mu, rho=None)
+        dump_file(dm, output[0])
