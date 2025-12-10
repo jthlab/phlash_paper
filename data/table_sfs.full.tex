@@ -1,0 +1,53 @@
+
+\documentclass{article}
+\usepackage[margin=1in,letterpaper]{geometry}
+\usepackage{booktabs}
+\usepackage{multirow}
+\begin{document}
+\begin{footnotesize}
+\begin{tabular}{llllll}
+\toprule
+ &  & \textsc{SMC}\texttt{{++}} & \textsc{MSMC2} & \textsc{phlash} & \textsc{FitCoal} \\
+Model & $n$ &  &  &  &  \\
+\midrule
+\multirow[c]{2}{*}{\texttt{Africa\_1T12}} & \texttt{10} & $0.0185$ & $0.0189$ & $\mathbf{0.00549}^*$ & $0.0175$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.00937}^*$ & $0.0676$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{African3Epoch\_1H18}} & \texttt{10} & $0.0274$ & $0.00726$ & $\mathbf{0.00569}$ & $0.0112$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.0157}$ & $0.0164$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{African3Epoch\_1S16}} & \texttt{10} & $0.102$ & $0.121$ & $0.00943$ & $\mathbf{0.00191}^*$ \\
+ & \texttt{100} & --- & --- & $0.0089$ & $\mathbf{0.00334}^*$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{AmericanAdmixture\_4B11}} & \texttt{10} & $0.0501$ & $0.0656$ & $\mathbf{0.0167}^*$ & $0.11$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.0158}^*$ & $0.392$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{BonoboGhost\_4K19}} & \texttt{10} & $0.0466$ & $\mathbf{0.02}^*$ & $0.0256$ & $0.028$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.0221}^*$ & $0.0305$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{Constant}} & \texttt{10} & $0.0141$ & $0.0161$ & $0.00429$ & $\mathbf{0.00145}^*$ \\
+ & \texttt{100} & --- & --- & $0.00585$ & $\mathbf{0.0023}^*$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{GabonAg1000G\_1A17}} & \texttt{10} & $0.264$ & $0.128$ & $0.0155$ & $\mathbf{0.00337}^*$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.012}^*$ & $0.0155$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{HolsteinFriesian\_1M13}} & \texttt{10} & $0.0215$ & $0.0164$ & $\mathbf{0.00584}$ & $0.0933$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.0116}^*$ & $0.116$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{SinglePopSMCpp\_1W22}} & \texttt{10} & $0.0875$ & $0.0399$ & $\mathbf{0.00202}^*$ & $0.00556$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.00397}^*$ & $0.0394$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{SouthMiddleAtlas\_1D17}} & \texttt{10} & $0.0196$ & $\mathbf{0.00726}$ & $0.00785$ & $0.00739$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.0145}$ & $0.0148$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{TwoSpecies\_2L11}} & \texttt{10} & $0.0281$ & $0.0261$ & $\mathbf{0.0124}^*$ & $0.0127$ \\
+ & \texttt{100} & --- & --- & $0.0196$ & $\mathbf{0.0168}^*$ \\
+\cline{1-6}
+\multirow[c]{2}{*}{\texttt{Zigzag\_1S14}} & \texttt{10} & $\mathbf{0.00684}$ & $0.009$ & $0.00692$ & $0.0319$ \\
+ & \texttt{100} & --- & --- & $\mathbf{0.0117}^*$ & $0.142$ \\
+\cline{1-6}
+\bottomrule
+\end{tabular}
+\end{footnotesize}
+
+\end{document}
